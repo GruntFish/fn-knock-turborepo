@@ -13,6 +13,8 @@ import { createTerminalTouchGestures } from "./terminal-touch";
 import { bindTerminalTextInput } from "./terminal-text-input";
 import { bindTerminalClipboard } from "./terminal-clipboard";
 import { snapshotTerminalText } from "./terminal-buffer-text";
+import { bindTerminalRenderCache } from "./terminal-render-cache";
+import { createTerminalCursorActivity } from "./terminal-cursor-activity";
 
 interface UseTerminalEmulatorOptions {
   applyFontSize: (value: number, options?: { persist?: boolean }) => void;
@@ -53,6 +55,8 @@ export function useTerminalEmulator({
   let initializationPromise: Promise<void> | null = null;
   let unbindTextInput: (() => void) | null = null;
   let unbindClipboard: (() => void) | null = null;
+  let unbindRenderCache: (() => void) | null = null;
+  const cursorActivity = createTerminalCursorActivity(() => term);
   let copyHandler: ((text: string) => void) | null = null;
 
   function runTerminalInternalMutation(
@@ -145,6 +149,7 @@ export function useTerminalEmulator({
     remoteOutputWriteDepth += 1;
     try {
       term.write(payload);
+      cursorActivity.observeOutput();
     } finally {
       remoteOutputWriteDepth -= 1;
     }
@@ -162,6 +167,7 @@ export function useTerminalEmulator({
       { dropResponses: true },
     );
     term.scrollToBottom();
+    cursorActivity.reset();
   };
   const clearTerminal = () => {
     resetOutputState();
@@ -241,6 +247,8 @@ export function useTerminalEmulator({
       nextTerm.loadAddon(nextFitAddon);
       nextTerm.open(mountElement);
       term = nextTerm;
+      unbindRenderCache = bindTerminalRenderCache(nextTerm);
+      cursorActivity.reset();
       unbindClipboard = bindTerminalClipboard(mountElement, nextTerm, (text) =>
         copyHandler?.(text),
       );
@@ -293,6 +301,9 @@ export function useTerminalEmulator({
     mouseReporter.unbind();
     touchGestures.unbind();
     fitController.dispose();
+    cursorActivity.dispose();
+    unbindRenderCache?.();
+    unbindRenderCache = null;
     fitAddon?.dispose();
     term?.dispose();
     fitAddon = null;
@@ -319,6 +330,8 @@ export function useTerminalEmulator({
       rows: term?.rows || 32,
     }),
     isPinchZooming,
+    markInputActivity: cursorActivity.markActivity,
+    resetInputActivity: cursorActivity.reset,
     resetOutputState,
     scheduleFit: fitController.schedule,
     syncTerminalTextInputAnchor,

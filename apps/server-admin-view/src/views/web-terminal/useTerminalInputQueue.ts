@@ -13,199 +13,209 @@ import {
 } from "./terminal-input";
 
 const MAX_PENDING_INPUT_BYTES = 64 * 1024;
-
 type TerminalConnectionState = "idle" | "connecting" | "connected" | "error";
+type Owner = Pick<TerminalAttachmentRecord, "id" | "generation">;
+type Completion = { error?: unknown };
+type InputBatch = { data: string; bytes: number };
+
+const createQueue = () => ({
+  owner: null as Owner | null,
+  batches: [] as InputBatch[],
+  pendingBytes: 0,
+  inFlightBytes: 0,
+  enqueuedBytes: 0,
+  acknowledgedBytes: 0,
+  pumping: false,
+  timer: null as number | null,
+  waiters: [] as {
+    through: number;
+    complete: (result: Completion) => void;
+  }[],
+});
+type InputQueue = ReturnType<typeof createQueue>;
 
 export const useTerminalInputQueue = ({
   activeAttachment,
   connectionState,
   onSendError,
+  onUserInput,
   selectedSessionId,
   sendInput,
   translate,
 }: {
-  activeAttachment: Ref<TerminalAttachmentRecord | null>;
+  activeAttachment: Readonly<Ref<TerminalAttachmentRecord | null>>;
   connectionState: Readonly<Ref<TerminalConnectionState>>;
   onSendError: (error: unknown) => void;
+  onUserInput?: () => void;
   selectedSessionId: Ref<string>;
   sendInput: (attachmentId: string, payload: string) => Promise<unknown>;
   translate: (key: string) => string;
 }) => {
-  let inputFlushTimer: number | null = null;
-  let pendingInputBuffer = "";
-  let pendingInputBytes = 0;
-  let inputSendQueue: Promise<unknown> = Promise.resolve();
-  let inputQueueGeneration = 0;
+  let queue = createQueue();
+  // Retain only actual in-flight requests, never one Promise per keystroke.
+  // An obsolete request must not block a different attachment, but a reclaimed
+  // attachment still waits for its previous request before sending again.
+  const inFlight = new Map<string, Promise<unknown>>();
+  const noConnection = () =>
+    new Error(translate("admin.webTerminal.noConnection"));
+  const ownsAttachment = (owner: Owner) =>
+    activeAttachment.value?.id === owner.id &&
+    activeAttachment.value.generation === owner.generation;
+  const cancelTimer = (current: InputQueue) => {
+    if (current.timer !== null) window.clearTimeout(current.timer);
+    current.timer = null;
+  };
+  const finishWaiters = (current: InputQueue, result?: Completion) => {
+    current.waiters = current.waiters.filter((waiter) => {
+      if (result || waiter.through <= current.acknowledgedBytes) {
+        waiter.complete(result ?? {});
+        return false;
+      }
+      return true;
+    });
+  };
+  const clearPendingInput = (error: unknown = noConnection()) => {
+    const previous = queue;
+    queue = createQueue();
+    cancelTimer(previous);
+    previous.batches = [];
+    previous.pendingBytes = 0;
+    finishWaiters(previous, { error });
+  };
+  const isCurrent = (current: InputQueue, owner: Owner) => {
+    if (current !== queue) return false;
+    if (ownsAttachment(owner)) return true;
+    clearPendingInput();
+    return false;
+  };
 
-  const shouldFlushInputImmediately = (data: string): boolean =>
-    data.includes("\r") ||
-    data.includes("\n") ||
-    data.includes("\u0003") ||
-    data.includes("\u0004") ||
-    data.includes("\u001b") ||
-    getInputByteLength(data) >= INPUT_BATCH_MAX_BYTES;
-
-  const clearPendingInput = () => {
-    inputQueueGeneration += 1;
-    if (inputFlushTimer) {
-      window.clearTimeout(inputFlushTimer);
-      inputFlushTimer = null;
+  const pump = async (current: InputQueue) => {
+    if (current !== queue || current.pumping || !activeAttachment.value) return;
+    current.owner ??= {
+      id: activeAttachment.value.id,
+      generation: activeAttachment.value.generation,
+    };
+    const owner = current.owner;
+    if (!isCurrent(current, owner)) return;
+    cancelTimer(current);
+    current.pumping = true;
+    try {
+      const previous = inFlight.get(owner.id);
+      if (previous) await previous.catch(() => undefined);
+      while (isCurrent(current, owner) && current.batches.length) {
+        // Incoming keys merge into the unsent tail while this batch is in flight.
+        const batch = current.batches.shift()!;
+        current.pendingBytes -= batch.bytes;
+        current.inFlightBytes = batch.bytes;
+        const request = Promise.resolve().then(() => {
+          if (isCurrent(current, owner)) {
+            return sendInput(owner.id, encodeInputToBase64(batch.data));
+          }
+        });
+        inFlight.set(owner.id, request);
+        try {
+          await request;
+        } finally {
+          if (inFlight.get(owner.id) === request) inFlight.delete(owner.id);
+          current.inFlightBytes = 0;
+        }
+        if (!isCurrent(current, owner)) return;
+        current.acknowledgedBytes += batch.bytes;
+        finishWaiters(current);
+      }
+    } catch (error) {
+      if (isCurrent(current, owner)) {
+        clearPendingInput(error);
+        onSendError(error);
+      }
+    } finally {
+      current.pumping = false;
     }
-    pendingInputBuffer = "";
-    pendingInputBytes = 0;
   };
 
-  const getPendingInputSnapshot = () => ({
-    byteLength: pendingInputBytes,
-    hasPendingInput: pendingInputBuffer.length > 0,
-  });
-
-  const setInputSendError = (error: unknown) => {
-    onSendError(error);
-  };
-
-  const queueInputPayload = (attachmentId: string, payload: string) => {
-    const generation = inputQueueGeneration;
-    inputSendQueue = inputSendQueue
-      .catch(() => undefined)
-      .then(async () => {
-        if (
-          generation !== inputQueueGeneration ||
-          activeAttachment.value?.id !== attachmentId
-        ) {
-          return;
-        }
-        await sendInput(attachmentId, encodeInputToBase64(payload));
-      })
-      .catch((error) => {
-        if (
-          generation !== inputQueueGeneration ||
-          activeAttachment.value?.id !== attachmentId
-        ) {
-          return;
-        }
-        setInputSendError(error);
-      });
-    return inputSendQueue;
+  const waitThroughCurrentInput = (
+    current: InputQueue,
+  ): Promise<Completion> => {
+    if (current.acknowledgedBytes >= current.enqueuedBytes)
+      return Promise.resolve({});
+    return new Promise((complete) => {
+      current.waiters.push({ through: current.enqueuedBytes, complete });
+    });
   };
 
   const flushPendingInput = async () => {
-    if (inputFlushTimer) {
-      window.clearTimeout(inputFlushTimer);
-      inputFlushTimer = null;
-    }
-
-    const attachmentId = activeAttachment.value?.id;
-    if (!pendingInputBuffer) {
-      await inputSendQueue;
-      return;
-    }
-    if (!attachmentId) {
-      console.warn(
-        "[terminal] input flush deferred until attachment is ready",
-        {
-          connectionState: connectionState.value,
-          bufferedBytes: pendingInputBytes,
-          selectedSessionId: selectedSessionId.value || null,
-        },
-      );
-      return;
-    }
-
-    const payloads = splitTerminalInputByByteLength(
-      pendingInputBuffer,
-      INPUT_BATCH_MAX_BYTES,
-    );
-    pendingInputBuffer = "";
-    pendingInputBytes = 0;
-    for (const payload of payloads) queueInputPayload(attachmentId, payload);
-    await inputSendQueue;
+    if (!activeAttachment.value) return;
+    const current = queue;
+    const completed = waitThroughCurrentInput(current);
+    void pump(current);
+    // Background flush failures are reported once by the pump. Explicit sends
+    // below also propagate the failure to their caller (e.g. the send dialog).
+    await completed;
   };
 
-  const scheduleInputFlush = () => {
-    if (inputFlushTimer) return;
-    inputFlushTimer = window.setTimeout(() => {
-      inputFlushTimer = null;
-      void flushPendingInput();
-    }, INPUT_BATCH_WINDOW_MS);
+  const enqueue = (data: string, immediate: boolean, userInput: boolean) => {
+    if (!data) return;
+    if (queue.owner && !ownsAttachment(queue.owner)) clearPendingInput();
+    if (!activeAttachment.value && connectionState.value !== "connecting")
+      return;
+    const current = queue;
+    if (activeAttachment.value) {
+      current.owner ??= {
+        id: activeAttachment.value.id,
+        generation: activeAttachment.value.generation,
+      };
+    }
+    // Merge only the unsent tail; already submitted bytes are immutable for retry.
+    const tail = current.batches.pop();
+    let combined = (tail?.data ?? "") + data;
+    if (!activeAttachment.value) {
+      const available =
+        MAX_PENDING_INPUT_BYTES - current.pendingBytes + (tail?.bytes ?? 0);
+      if (available <= 0) {
+        if (tail) current.batches.push(tail);
+        return;
+      }
+      combined = splitTerminalInputByByteLength(combined, available)[0] ?? "";
+    }
+    const chunks = splitTerminalInputByByteLength(
+      combined,
+      INPUT_BATCH_MAX_BYTES,
+    );
+    const batches = chunks.map((chunk) => ({
+      data: chunk,
+      bytes: getInputByteLength(chunk),
+    }));
+    const addedBytes =
+      batches.reduce((sum, batch) => sum + batch.bytes, 0) - (tail?.bytes ?? 0);
+    current.batches.push(...batches);
+    current.pendingBytes += addedBytes;
+    current.enqueuedBytes += addedBytes;
+    if (userInput && addedBytes > 0) onUserInput?.();
+    if (!activeAttachment.value || current.pumping) return;
+
+    // All C0 controls and DEL bypass the ordinary text window (including
+    // backspace/tab). The window starts at the first key and is never extended.
+    const hasControl = Array.from(data).some(
+      (char) => char.charCodeAt(0) < 32 || char === "\u007f",
+    );
+    if (
+      immediate ||
+      hasControl ||
+      current.pendingBytes >= INPUT_BATCH_MAX_BYTES
+    ) {
+      void pump(current);
+    } else if (current.timer === null) {
+      current.timer = window.setTimeout(() => {
+        current.timer = null;
+        void pump(current);
+      }, INPUT_BATCH_WINDOW_MS);
+    }
   };
 
   const queueTerminalInput = (
     data: string,
     options?: { immediate?: boolean },
-  ) => {
-    if (!data) {
-      return;
-    }
-
-    if (!activeAttachment.value && connectionState.value !== "connecting") {
-      console.warn("[terminal] dropping input without active attachment", {
-        connectionState: connectionState.value,
-        selectedSessionId: selectedSessionId.value || null,
-        byteLength: getInputByteLength(data),
-        immediate: options?.immediate === true,
-      });
-      return;
-    }
-
-    if (!activeAttachment.value && pendingInputBuffer.length === 0) {
-      console.warn(
-        "[terminal] buffering early input before attachment is ready",
-        {
-          connectionState: connectionState.value,
-          selectedSessionId: selectedSessionId.value || null,
-          byteLength: getInputByteLength(data),
-          immediate: options?.immediate === true,
-        },
-      );
-    }
-
-    const combined = `${pendingInputBuffer}${data}`;
-    const attachmentId = activeAttachment.value?.id;
-    if (!attachmentId) {
-      const bounded = splitTerminalInputByByteLength(
-        combined,
-        MAX_PENDING_INPUT_BYTES,
-      );
-      pendingInputBuffer = bounded[0] ?? "";
-      pendingInputBytes = getInputByteLength(pendingInputBuffer);
-      if (bounded.length > 1) {
-        console.warn(
-          "[terminal] dropped input beyond the pending buffer limit",
-          {
-            bufferedBytes: pendingInputBytes,
-            connectionState: connectionState.value,
-            selectedSessionId: selectedSessionId.value || null,
-          },
-        );
-      }
-      return;
-    }
-
-    if (inputFlushTimer) {
-      window.clearTimeout(inputFlushTimer);
-      inputFlushTimer = null;
-    }
-    pendingInputBuffer = "";
-    pendingInputBytes = 0;
-    const chunks = splitTerminalInputByByteLength(
-      combined,
-      INPUT_BATCH_MAX_BYTES,
-    );
-    const flushTail = options?.immediate || shouldFlushInputImmediately(data);
-    chunks.forEach((chunk, index) => {
-      const bytes = getInputByteLength(chunk);
-      const isTail = index === chunks.length - 1;
-      if (!isTail || flushTail || bytes >= INPUT_BATCH_MAX_BYTES) {
-        queueInputPayload(attachmentId, chunk);
-      } else {
-        pendingInputBuffer = chunk;
-        pendingInputBytes = bytes;
-      }
-    });
-    if (pendingInputBuffer) scheduleInputFlush();
-  };
-
+  ) => enqueue(data, options?.immediate === true, true);
   const queueRemoteTerminalResponse = (data: string) => {
     if (!isSafeRemoteTerminalResponse(data)) {
       console.warn("[terminal] dropped unexpected terminal response", {
@@ -214,39 +224,27 @@ export const useTerminalInputQueue = ({
       });
       return;
     }
-
-    queueTerminalInput(data, { immediate: true });
+    enqueue(data, true, false);
   };
-
   const sendTerminalPayloadNow = async (payload: string) => {
     if (!payload) return;
-    await flushPendingInput().catch(() => undefined);
-
-    const attachmentId = activeAttachment.value?.id;
-    if (!attachmentId) {
-      throw new Error(translate("admin.webTerminal.noConnection"));
-    }
-
-    try {
-      for (const chunk of splitTerminalInputByByteLength(
-        payload,
-        INPUT_BATCH_MAX_BYTES,
-      )) {
-        if (activeAttachment.value?.id !== attachmentId) {
-          throw new Error(translate("admin.webTerminal.noConnection"));
-        }
-        await sendInput(attachmentId, encodeInputToBase64(chunk));
-      }
-    } catch (error) {
-      setInputSendError(error);
-      throw error;
-    }
+    if (!activeAttachment.value) throw noConnection();
+    // Enqueue before awaiting anything so a later hardware key cannot overtake
+    // a paste, nor can two callers send concurrently with the normal queue.
+    enqueue(payload, true, true);
+    const result = await waitThroughCurrentInput(queue);
+    if ("error" in result) throw result.error;
   };
 
   return {
-    clearPendingInput,
+    clearPendingInput: () => clearPendingInput(),
     flushPendingInput,
-    getPendingInputSnapshot,
+    getPendingInputSnapshot: () => ({
+      byteLength: queue.pendingBytes,
+      hasPendingInput: queue.pendingBytes > 0,
+      inFlightBytes: queue.inFlightBytes,
+      sessionId: selectedSessionId.value || null,
+    }),
     queueRemoteTerminalResponse,
     queueTerminalInput,
     sendTerminalPayloadNow,

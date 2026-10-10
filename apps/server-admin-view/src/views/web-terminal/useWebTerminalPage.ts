@@ -125,6 +125,7 @@ export const useWebTerminalPage = () => {
 
   const inputQueue = useTerminalInputQueue({
     activeAttachment: controllingAttachment,
+    onUserInput: () => emulator.markInputActivity(),
     connectionState: attachmentController.inputConnectionState,
     onSendError: (reason) => {
       const failure = attachmentController.reportRequestError(
@@ -178,6 +179,7 @@ export const useWebTerminalPage = () => {
     selectSession: sessionsController.selectSession,
     stopControlQueues: () => {
       inputQueue.clearPendingInput();
+      emulator.resetInputActivity();
       resizeQueue.resetResizeState();
     },
   });
