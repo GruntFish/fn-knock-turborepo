@@ -8,6 +8,7 @@ import {
 import ConfirmDangerPopover from "@admin-shared/components/common/ConfirmDangerPopover.vue";
 defineProps<{
   label: string;
+  confirmText?: string;
   title: string;
   description: string;
   loading?: boolean;
@@ -21,6 +22,7 @@ defineProps<{
     <Tooltip>
       <ConfirmDangerPopover
         :title="title"
+        :confirm-text="confirmText"
         :description="description"
         :loading="loading"
         :disabled="disabled"

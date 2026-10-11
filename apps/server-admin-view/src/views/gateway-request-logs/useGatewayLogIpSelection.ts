@@ -14,7 +14,9 @@ export const useGatewayLogIpSelection = ({
   selectedLogEntryKeys,
   translate,
 }: {
-  displayedEntries: ComputedRef<SelectableGatewayLogEntry[]>;
+  displayedEntries: ComputedRef<
+    Array<{ actionIp: string; selectionKey: string }>
+  >;
   selectedLogEntryKeys: Ref<Set<string>>;
   translate: (key: string, params?: TranslateParams) => string;
 }) => {

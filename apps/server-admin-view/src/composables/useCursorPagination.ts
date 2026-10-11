@@ -28,9 +28,11 @@ export const useCursorPagination = ({ loading }: { loading: Ref<boolean> }) => {
     return true;
   };
 
-  const loadFirst = () => {
+  const loadFirst = (preserveSnapshot = false) => {
     if (cursorHistory.value.length === 0 || loading.value) return false;
+    const firstCursor = cursorHistory.value[0] ?? "";
     reset();
+    if (preserveSnapshot) currentCursor.value = firstCursor;
     return true;
   };
 

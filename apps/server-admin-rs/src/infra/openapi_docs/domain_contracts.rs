@@ -5530,6 +5530,10 @@ fn query_parameters(contract: &DomainOperation) -> Vec<Value> {
             }),
         ],
         ("get", "/api/admin/gateway-logs/entries") => vec![
+            query_parameter("from", json!({"type":"string", "format":"date"})),
+            query_parameter("to", json!({"type":"string", "format":"date"})),
+            query_parameter("sort", json!({"type":"string", "enum":["time"]})),
+            query_parameter("order", json!({"type":"string", "enum":["asc","desc"]})),
             query_parameter(
                 "client_ip",
                 json!({ "type": "string", "description": "Exact client IP, or unknown for missing client IP" }),

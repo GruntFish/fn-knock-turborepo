@@ -14,7 +14,7 @@ export const useGatewayLogIpPresentation = (
     loadError,
     ipGroups,
     hasFilters,
-    selectedDate,
+    rangeLabel,
   } = resource;
   const { t } = useI18n();
   const root = ref<HTMLElement | null>(null);
@@ -64,7 +64,7 @@ export const useGatewayLogIpPresentation = (
         ? "admin.gatewayRequestLogs.ipView.filteredSummary"
         : "admin.gatewayRequestLogs.ipView.summary",
       {
-        date: selectedDate.value,
+        date: rangeLabel.value,
         ips: ipGroups.value.total_ips,
         requests: ipGroups.value.total_requests,
       },

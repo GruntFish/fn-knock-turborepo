@@ -123,6 +123,7 @@ export const GatewayLogsAPI = {
   ): Promise<GatewayLogEntriesPayload> {
     const res = await apiClient.get("/gateway-logs/entries", {
       params,
+      timeout: 125_000,
     });
     return res.data.data;
   },

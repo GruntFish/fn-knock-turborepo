@@ -12,10 +12,13 @@ pub(super) fn validate_client_ip(value: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn canonical_ip(value: &str) -> String {
+pub(super) fn canonical_ip(value: &str) -> String {
     normalize_ip(value)
         .parse::<std::net::IpAddr>()
-        .map(|ip| ip.to_canonical().to_string())
+        .map(|ip| match ip.to_canonical() {
+            std::net::IpAddr::V6(ip) if ip.is_loopback() => "127.0.0.1".to_string(),
+            ip => ip.to_string(),
+        })
         .unwrap_or_default()
 }
 
@@ -84,7 +87,10 @@ fn group_response(groups: BTreeMap<String, IpGroup>, query: &GatewayLogQuery, da
     let mut items: Vec<_> = groups.into_values().collect();
     items.sort_by(|a, b| {
         let order = match query.sort.as_deref().unwrap_or("requests") {
-            "last_seen" => b.last_timestamp.cmp(&a.last_timestamp),
+            "last_seen" => match (a.last_timestamp, b.last_timestamp) {
+                (Some(a), Some(b)) if query.order.as_deref() == Some("asc") => a.cmp(&b),
+                _ => b.last_timestamp.cmp(&a.last_timestamp),
+            },
             "client_errors" => b.client_errors.cmp(&a.client_errors),
             "server_errors" => b.server_errors.cmp(&a.server_errors),
             "waf_hits" => b.waf_hits.cmp(&a.waf_hits),
@@ -101,7 +107,7 @@ fn group_response(groups: BTreeMap<String, IpGroup>, query: &GatewayLogQuery, da
         .skip((page - 1) * limit)
         .take(limit)
         .collect();
-    json!({ "date": date, "page": page, "limit": limit, "total": total,
+    json!({ "date": date, "from": query.from.as_deref().unwrap_or(date), "to": query.to.as_deref().unwrap_or(date), "page": page, "limit": limit, "total": total,
         "total_ips": total_ips, "total_requests": total_requests, "items": items })
 }
 
@@ -117,43 +123,74 @@ where
     F: FnMut(GatewayLogQuery) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<Value>>,
 {
+    let range = range::validate(&query)?;
     let waf = normalize_waf_status_filter(query.waf_status.as_deref());
-    let mut scan = query.clone();
-    scan.pagination = Some("cursor".into());
-    scan.cursor = None;
-    scan.limit = Some("200".into());
+    let mut days = Vec::new();
+    if let Some((from, to)) = range {
+        let mut day = from;
+        loop {
+            days.push(Some(day.to_string()));
+            if day == to {
+                break;
+            }
+            day = day
+                .next_day()
+                .ok_or_else(|| anyhow::anyhow!("invalid date range"))?;
+        }
+    } else {
+        days.push(query.date.clone());
+    }
     let mut groups = BTreeMap::new();
     let mut date = query.date.clone().unwrap_or_default();
-    loop {
-        let data = fetch(scan.clone()).await?;
-        if let Some(value) = data.get("date").and_then(Value::as_str) {
-            date = value.to_string();
-            scan.date = Some(date.clone());
-        }
-        if let Some(items) = data.get("items").and_then(Value::as_array) {
-            for entry in items {
-                if matches_entry(entry, query.client_ip.as_deref(), waf) {
-                    accumulate(&mut groups, entry);
+    for day in days {
+        let mut scan = query.clone();
+        scan.date = day;
+        scan.from = None;
+        scan.to = None;
+        scan.sort = None;
+        scan.order = None;
+        scan.pagination = Some("cursor".into());
+        scan.cursor = None;
+        scan.limit = Some("200".into());
+        loop {
+            let data = fetch(scan.clone()).await?;
+            if let Some(value) = data.get("date").and_then(Value::as_str) {
+                if range.is_none() {
+                    date = value.to_string();
+                }
+                scan.date = Some(value.to_string());
+            }
+            if let Some(items) = data.get("items").and_then(Value::as_array) {
+                for entry in items {
+                    if matches_entry(entry, query.client_ip.as_deref(), waf) {
+                        accumulate(&mut groups, entry);
+                    }
                 }
             }
+            if !data
+                .get("has_more")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                break;
+            }
+            let cursor = data
+                .get("next_cursor")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            anyhow::ensure!(
+                !cursor.is_empty() && scan.cursor.as_deref() != Some(cursor),
+                "log cursor did not advance"
+            );
+            scan.cursor = Some(cursor.to_string());
         }
-        if !data
-            .get("has_more")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            break;
-        }
-        let cursor = data
-            .get("next_cursor")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        anyhow::ensure!(
-            !cursor.is_empty() && scan.cursor.as_deref() != Some(cursor),
-            "log cursor did not advance"
-        );
-        scan.cursor = Some(cursor.to_string());
     }
+    if let Some((from, to)) = range
+        && from == to
+    {
+        date = from.to_string();
+    }
+
     Ok(group_response(groups, &query, &date))
 }
 
@@ -162,6 +199,9 @@ pub(super) async fn ip_groups(
     State(state): State<AppState>,
     Query(query): Query<GatewayLogQuery>,
 ) -> Response {
+    if let Err(error) = range::validate(&query) {
+        return response::error(StatusCode::BAD_REQUEST, error.to_string());
+    }
     if validate_client_ip(query.client_ip.as_deref()).is_err() {
         return response::error(StatusCode::BAD_REQUEST, "invalid client_ip");
     }
@@ -194,6 +234,28 @@ pub(super) async fn ip_groups(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mapped_proxy_addresses_use_the_same_identity_as_go_details() {
+        for remote in [
+            "::FFFF:C0A8:102",
+            "[::ffff:c0a8:102]:443",
+            "::ffff:192.168.1.2",
+        ] {
+            let entry = json!({"remote_ip": remote, "x_forwarded_for": "8.8.8.8"});
+            assert_eq!(infer_gateway_log_client_ip(&entry), "8.8.8.8");
+            assert!(matches_entry(&entry, Some("8.8.8.8"), None));
+            let mut groups = BTreeMap::new();
+            accumulate(&mut groups, &entry);
+            assert!(groups.contains_key("8.8.8.8"));
+        }
+        assert_eq!(
+            infer_gateway_log_client_ip(&json!({
+                "eo_connecting_ip": "::FFFF:C0A8:102, 8.8.8.8"
+            })),
+            "8.8.8.8"
+        );
+    }
 
     #[tokio::test]
     async fn scans_every_page_before_filtering_grouping_and_pagination() {
@@ -255,6 +317,68 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn merges_days_before_sorting_and_paging_without_sorted_rescans() {
+        let query = GatewayLogQuery {
+            from: Some("2026-09-20".into()),
+            to: Some("2026-09-22".into()),
+            sort: Some("last_seen".into()),
+            order: Some("asc".into()),
+            limit: Some("1".into()),
+            page: Some("2".into()),
+            ..Default::default()
+        };
+        let mut days = Vec::new();
+        let result = aggregate_with(query, |scan| {
+            assert!(scan.from.is_none() && scan.to.is_none() && scan.sort.is_none() && scan.order.is_none());
+            let day = scan.date.clone().unwrap();
+            days.push(day.clone());
+            let items = match day.as_str() {
+                "2026-09-20" => json!([
+                    {"client_ip":"1.1.1.1", "host":"a.test", "status":404, "time":"2026-09-20T23:00:00Z"},
+                    {"client_ip":"8.8.8.8", "status":200, "time":"2026-09-20T01:00:00Z"},
+                    {"client_ip":"9.9.9.9", "time":"invalid"}
+                ]),
+                "2026-09-21" => json!([
+                    {"client_ip":"1.1.1.1", "host":"b.test", "status":503, "time":"2026-09-21T10:00:00+08:00", "waf_action":"block"}
+                ]),
+                _ => json!([])
+            };
+            std::future::ready(Ok(json!({"date":day, "items":items, "has_more":false})))
+        }).await.unwrap();
+        assert_eq!(days.len(), 3);
+        assert_eq!(result["from"], "2026-09-20");
+        assert_eq!(result["to"], "2026-09-22");
+        assert_eq!(result["total_requests"], 4);
+        let group = &result["items"][0];
+        assert_eq!(group["client_ip"], "1.1.1.1");
+        assert_eq!(group["requests"], 2);
+        assert_eq!(group["client_errors"], 1);
+        assert_eq!(group["server_errors"], 1);
+        assert_eq!(group["waf_hits"], 1);
+        assert_eq!(group["hosts"], json!(["a.test", "b.test"]));
+        assert_eq!(group["first_seen"], "2026-09-20T23:00:00Z");
+        assert_eq!(group["last_seen"], "2026-09-21T10:00:00+08:00");
+    }
+
+    #[tokio::test]
+    async fn a_failed_day_does_not_return_a_partial_range() {
+        let query = GatewayLogQuery {
+            from: Some("2026-09-20".into()),
+            to: Some("2026-09-21".into()),
+            ..Default::default()
+        };
+        let result = aggregate_with(query, |scan| {
+            std::future::ready(if scan.date.as_deref() == Some("2026-09-20") {
+                Ok(json!({"items":[{"client_ip":"1.1.1.1"}]}))
+            } else {
+                Err(anyhow::anyhow!("read failed"))
+            })
+        })
+        .await;
+        assert!(result.is_err());
+    }
+
     #[test]
     fn grouping_counts_all_entries_and_unknowns_with_stable_paging() {
         let mut groups = BTreeMap::new();
@@ -296,6 +420,14 @@ mod tests {
         assert!(!matches_entry(&entry, Some("36.142.108.111"), None));
         assert!(!matches_entry(&entry, Some("2001:db8::1"), Some("none")));
         assert!(matches_entry(&json!({}), Some("unknown"), None));
+        for ip in ["::1", "0:0:0:0:0:0:0:1", "127.0.0.1"] {
+            assert_eq!(canonical_ip(ip), "127.0.0.1");
+            assert!(matches_entry(
+                &json!({"client_ip":ip}),
+                Some("127.0.0.1"),
+                None
+            ));
+        }
         assert!(validate_client_ip(Some("bad-ip")).is_err());
         assert!(validate_client_ip(Some("")).is_err());
     }

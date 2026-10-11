@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import GatewayLogOrderSelect from "./GatewayLogOrderSelect.vue";
+import GatewayLogBlacklistAction from "./GatewayLogBlacklistAction.vue";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useI18n } from "vue-i18n";
 import { ArrowUpRight } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
@@ -16,9 +19,22 @@ defineProps<{
   data: GatewayLogIpGroups | null;
   loading: boolean;
   sort: string;
+  order: string;
+  selectedKeys: Set<string>;
+  allSelected: boolean;
+  isBlacklisted: (ip: string) => boolean;
+  mutating: boolean;
+  block: (ips: string[]) => void | Promise<void>;
+  release: (ips: string[]) => void | Promise<void>;
   location: (ip: string) => string;
 }>();
-const emit = defineEmits<{ open: [ip: string]; sort: [value: unknown] }>();
+const emit = defineEmits<{
+  open: [ip: string];
+  sort: [value: unknown];
+  order: [value: unknown];
+  select: [ip: string];
+  selectAll: [selected: boolean];
+}>();
 const { t } = useI18n();
 const sorts = [
   "requests",
@@ -37,6 +53,21 @@ const sorts = [
       <p class="text-xs text-muted-foreground">
         {{ t("admin.gatewayRequestLogs.ipView.hint") }}
       </p>
+      <label class="flex items-center gap-2 text-xs">
+        <Checkbox
+          :model-value="allSelected"
+          :disabled="
+            loading || mutating || !data?.items.some((item) => item.client_ip)
+          "
+          @update:model-value="emit('selectAll', $event === true)"
+        />
+        {{ t("admin.gatewayRequestLogs.range.selectPage") }}
+      </label>
+      <GatewayLogOrderSelect
+        v-if="sort === 'last_seen'"
+        :order="order"
+        @change="emit('order', $event)"
+      />
       <Select :model-value="sort" @update:model-value="emit('sort', $event)">
         <SelectTrigger
           class="w-44"
@@ -69,6 +100,11 @@ const sorts = [
         <table class="w-full text-left text-sm">
           <thead class="border-b bg-muted/20 text-xs text-muted-foreground">
             <tr>
+              <th class="w-10 px-3">
+                <span class="sr-only">{{
+                  t("admin.gatewayRequestLogs.range.selectPage")
+                }}</span>
+              </th>
               <th class="px-4 py-3 font-medium">
                 {{ t("admin.gatewayRequestLogs.columns.clientIp") }}
               </th>
@@ -98,6 +134,14 @@ const sorts = [
               :key="item.client_ip"
               class="hover:bg-muted/20"
             >
+              <td class="px-3 py-3">
+                <Checkbox
+                  :model-value="selectedKeys.has(item.client_ip)"
+                  :disabled="!item.client_ip || mutating"
+                  :aria-label="t('common.selectItem', { item: item.client_ip })"
+                  @update:model-value="emit('select', item.client_ip)"
+                />
+              </td>
               <td class="px-4 py-3">
                 <button
                   type="button"
@@ -183,6 +227,13 @@ const sorts = [
                 </p>
               </td>
               <td class="px-4 py-3 text-right">
+                <GatewayLogBlacklistAction
+                  :ip="item.client_ip"
+                  :blocked="isBlacklisted(item.client_ip)"
+                  :mutating="mutating"
+                  :block="block"
+                  :release="release"
+                />
                 <Button
                   variant="ghost"
                   size="sm"
@@ -202,6 +253,12 @@ const sorts = [
           class="space-y-3 p-4"
         >
           <div class="flex items-start justify-between gap-3">
+            <Checkbox
+              :model-value="selectedKeys.has(item.client_ip)"
+              :disabled="!item.client_ip || mutating"
+              :aria-label="t('common.selectItem', { item: item.client_ip })"
+              @update:model-value="emit('select', item.client_ip)"
+            />
             <div class="min-w-0">
               <button
                 type="button"
@@ -255,6 +312,13 @@ const sorts = [
                 <HumanFriendlyTime :value="item.last_seen" />
               </p>
             </div>
+            <GatewayLogBlacklistAction
+              :ip="item.client_ip"
+              :blocked="isBlacklisted(item.client_ip)"
+              :mutating="mutating"
+              :block="block"
+              :release="release"
+            />
             <Button
               variant="outline"
               size="sm"

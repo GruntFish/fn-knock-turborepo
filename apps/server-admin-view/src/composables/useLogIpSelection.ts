@@ -155,6 +155,7 @@ export const useLogIpSelection = <Entry extends SelectableLogIpEntry>({
   };
 
   const blockIps = async (ips: string[]) => {
+    if (isMutatingBlacklistIps.value) return;
     const uniqueIps = Array.from(new Set(ips.filter(Boolean))).filter(
       (ip) => !isGeneralBlacklisted(ip),
     );
@@ -176,6 +177,7 @@ export const useLogIpSelection = <Entry extends SelectableLogIpEntry>({
   };
 
   const releaseIps = async (ips: string[]) => {
+    if (isMutatingBlacklistIps.value) return;
     const uniqueIps = Array.from(new Set(ips.filter(Boolean))).filter((ip) =>
       isGeneralBlacklisted(ip),
     );

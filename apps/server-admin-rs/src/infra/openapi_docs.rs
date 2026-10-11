@@ -574,6 +574,9 @@ pub(crate) fn build_openapi_document() -> Value {
         None,
     );
     let gateway_log_entries_parameters = json!([
+        {"name":"from","in":"query","required":false,"schema":{"type":"string","format":"date"}},
+        {"name":"to","in":"query","required":false,"schema":{"type":"string","format":"date"}},
+        {"name":"order","in":"query","required":false,"schema":{"type":"string","enum":["asc","desc"],"default":"desc"}},
         {"name":"date","in":"query","required":false,"schema":{"type":"string","format":"date"}},
         {"name":"pagination","in":"query","required":false,"schema":{"type":"string","enum":["page","cursor"]}},
         {"name":"page","in":"query","required":false,"schema":{"type":"integer","minimum":1}},
@@ -603,6 +606,7 @@ pub(crate) fn build_openapi_document() -> Value {
         Some({
             let mut parameters = gateway_log_entries_parameters;
             if let Some(items) = parameters.as_array_mut() {
+                items.push(json!({"name":"sort","in":"query","required":false,"schema":{"type":"string","enum":["time"]}}));
                 items.push(json!({"name":"client_ip","in":"query","required":false,"schema":{"type":"string"},"description":"Exact client IP, or unknown for missing client IP"}));
             }
             parameters

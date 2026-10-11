@@ -104,6 +104,8 @@ pub(super) struct GatewayLogEntryData {
 
 #[derive(Serialize, ToSchema)]
 pub(super) struct GatewayLogEntriesData {
+    from: String,
+    to: String,
     date: String,
     logs_dir: String,
     available_dates: Vec<String>,
@@ -249,6 +251,8 @@ pub(super) struct GatewayLogIpGroupData {
 
 #[derive(Serialize, ToSchema)]
 pub(super) struct GatewayLogIpGroupsData {
+    from: String,
+    to: String,
     date: String,
     page: usize,
     limit: usize,

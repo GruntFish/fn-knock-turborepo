@@ -1,14 +1,17 @@
+import { useGatewayLogDeletion } from "./useGatewayLogDeletion";
 import { isAxiosError } from "@frontend-core/api/createApiClient";
-import { useGatewayLogDates } from "./useGatewayLogDates";
+import { useGatewayLogFilterActions } from "./useGatewayLogFilterActions";
+import { isValidAnalyticsRange } from "../request-analysis/model";
+import {
+  useGatewayLogDates,
+  useGatewayLogDateState,
+} from "./useGatewayLogDates";
 import { useGatewayLogFilterLabels } from "./useGatewayLogFilterLabels";
 import { useRoute } from "vue-router";
 import { useGatewayLogIpView } from "./useGatewayLogIpView";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import {
-  extractErrorMessage,
-  useAsyncAction,
-} from "@admin-shared/composables/useAsyncAction";
+import { extractErrorMessage } from "@admin-shared/composables/useAsyncAction";
 import { useDelayedLoading } from "@admin-shared/composables/useDelayedLoading";
 import { toast } from "@admin-shared/utils/toast";
 import { useCursorPagination } from "@/composables/useCursorPagination";
@@ -19,7 +22,6 @@ import { useConfigStore } from "@/store/config";
 import type { GatewayLogEntry, TOTPCredential } from "@/types";
 import {
   getEntryClientIp,
-  getTodayString,
   type GatewayLoginFilterValue,
   type GatewayStatusFilterValue,
   type GatewayWAFFilterValue,
@@ -33,11 +35,8 @@ export const useGatewayRequestLogsResource = () => {
   const entries = ref<GatewayLogEntry[]>([]);
   const logsDir = ref("");
   const availableDates = ref<string[]>([]);
-  const selectedDate = ref(
-    typeof route.query.log_date === "string"
-      ? route.query.log_date
-      : getTodayString(),
-  );
+  const { selectedDate, selectedEndDate, serverToday, rangeLabel } =
+    useGatewayLogDateState(route.query);
   const selectedStatus = ref<GatewayStatusFilterValue>("all");
   const selectedLoggedIn = ref<GatewayLoginFilterValue>("all");
   const selectedCredential = ref("all");
@@ -62,6 +61,7 @@ export const useGatewayRequestLogsResource = () => {
   const ipView = useGatewayLogIpView({
     loading,
     selectedDate,
+    selectedEndDate,
     searchQuery,
     selectedStatus,
     selectedLoggedIn,
@@ -84,6 +84,8 @@ export const useGatewayRequestLogsResource = () => {
     ipGroups,
     ipPage,
     ipSort,
+    ipOrder,
+    requestOrder,
     detailRequests,
     loadError,
   } = ipView;
@@ -135,19 +137,12 @@ export const useGatewayRequestLogsResource = () => {
       canLoadNewer.value ||
       canLoadOlder.value,
   );
-  const { isPending: isDeleting, run: runDelete } = useAsyncAction({
-    onError: (error) => {
-      toast.error(t("admin.gatewayRequestLogs.deleteFailed"), {
-        description: extractErrorMessage(
-          error,
-          t("admin.gatewayRequestLogs.deleteFailedDescription"),
-        ),
-      });
-    },
-  });
+  const { isDeleting, deleteDate } = useGatewayLogDeletion();
 
   const { applyDates, fetchDates } = useGatewayLogDates({
     selectedDate,
+    selectedEndDate,
+    serverToday,
     availableDates,
     logsDir,
     currentRequest: () => {
@@ -169,8 +164,21 @@ export const useGatewayRequestLogsResource = () => {
 
   const fetchEntries = async () => {
     const currentRequestId = ++entriesRequestId;
+    if (
+      !isValidAnalyticsRange(
+        selectedDate.value,
+        selectedEndDate.value,
+        serverToday.value,
+      )
+    ) {
+      loading.value = false;
+      loadError.value = true;
+      toast.error(t("admin.gatewayRequestLogs.range.invalid"));
+      return;
+    }
     const params = {
-      date: selectedDate.value,
+      from: selectedDate.value,
+      to: selectedEndDate.value,
       pagination: "cursor" as const,
       limit: limit.value,
       cursor: currentCursor.value || undefined,
@@ -194,6 +202,7 @@ export const useGatewayRequestLogsResource = () => {
           ...params,
           page: ipPage.value,
           sort: ipSort.value,
+          order: ipOrder.value,
         });
         if (isDisposed || currentRequestId !== entriesRequestId) return;
         ipGroups.value = data;
@@ -202,7 +211,11 @@ export const useGatewayRequestLogsResource = () => {
         return;
       }
       const [data, summary] = await Promise.all([
-        GatewayLogsAPI.getEntries(params),
+        GatewayLogsAPI.getEntries({
+          ...params,
+          sort: "time",
+          order: requestOrder.value,
+        }),
         clientIp.value && !currentCursor.value && detailRequests.value === null
           ? GatewayLogsAPI.getIpGroups({ ...params, page: 1, limit: "1" })
           : Promise.resolve(null),
@@ -214,7 +227,9 @@ export const useGatewayRequestLogsResource = () => {
       selectedLogEntryKeys.value = new Set();
       trackIps(entries.value.map(getEntryClientIp));
       nextCursor.value = data.next_cursor || "";
-      applyDates(data.available_dates || [], data.date || params.date);
+      if (!currentCursor.value && data.cursor)
+        currentCursor.value = data.cursor;
+      applyDates(data.available_dates || [], params.from);
     } catch (error) {
       if (isDisposed || currentRequestId !== entriesRequestId) return;
       loadError.value = true;
@@ -240,6 +255,7 @@ export const useGatewayRequestLogsResource = () => {
   };
 
   const refreshAll = async () => {
+    selectedLogEntryKeys.value = new Set();
     const requestId = ++entriesRequestId;
     loading.value = true;
     await Promise.all([
@@ -255,81 +271,46 @@ export const useGatewayRequestLogsResource = () => {
 
   const applyFilter = async (update: () => void) => {
     update();
+    selectedLogEntryKeys.value = new Set();
     resetCursorPagination();
     ipPage.value = 1;
     detailRequests.value = null;
-    await fetchEntries();
+    await Promise.all([ipView.syncDateQuery(), fetchEntries()]);
   };
 
-  const handleDateChange = async (value: unknown) => {
-    if (!value) return;
-    await applyFilter(() => {
-      selectedDate.value = String(value);
-    });
-    await ipView.syncDateQuery();
-  };
-  const handleSearch = () => applyFilter(() => undefined);
-  const handleStatusChange = (value: unknown) =>
-    value
-      ? applyFilter(() => {
-          selectedStatus.value = String(value) as GatewayStatusFilterValue;
-        })
-      : Promise.resolve();
-  const handleLoggedInChange = (value: unknown) =>
-    value
-      ? applyFilter(() => {
-          selectedLoggedIn.value = String(value) as GatewayLoginFilterValue;
-        })
-      : Promise.resolve();
-  const handleCredentialChange = (value: unknown) =>
-    value
-      ? applyFilter(() => {
-          selectedCredential.value = String(value);
-        })
-      : Promise.resolve();
-  const handleWAFStatusChange = (value: unknown) =>
-    value
-      ? applyFilter(() => {
-          selectedWAFStatus.value = String(value) as GatewayWAFFilterValue;
-        })
-      : Promise.resolve();
-  const handleLimitChange = (value: unknown) =>
-    value
-      ? applyFilter(() => {
-          limit.value = String(value);
-        })
-      : Promise.resolve();
+  const filterActions = useGatewayLogFilterActions({
+    selectedDate,
+    selectedEndDate,
+    serverToday,
+    selectedStatus,
+    selectedLoggedIn,
+    selectedCredential,
+    selectedWAFStatus,
+    limit,
+    applyFilter,
+  });
 
   const handleLoadOlder = () => ipView.loadPage("older", loadCursorOlder);
   const handleLoadNewer = () => ipView.loadPage("newer", loadCursorNewer);
-  const handleLoadFirst = () => ipView.loadPage("first", loadCursorFirst);
+  const handleLoadFirst = () => ipView.loadPage("first", () => loadCursorFirst(true));
 
   const deleteSelectedDate = async () => {
-    await runDelete(() => GatewayLogsAPI.deleteDate(selectedDate.value), {
-      onSuccess: async (data) => {
-        ipView.invalidateOverview();
-        toast.success(
-          data.deleted
-            ? t("admin.gatewayRequestLogs.deletedForDate", {
-                date: selectedDate.value,
-              })
-            : t("admin.gatewayRequestLogs.noDeletedForDate", {
-                date: selectedDate.value,
-              }),
-        );
-        searchQuery.value = "";
-        selectedStatus.value = "all";
-        selectedLoggedIn.value = "all";
-        selectedCredential.value = "all";
-        selectedWAFStatus.value = "all";
-        resetCursorPagination();
-        const nextPreferred =
-          data.available_dates.find((item) => item !== selectedDate.value) ||
-          getTodayString();
-        await fetchDates(nextPreferred);
-        await ipView.syncDateQuery();
-        await fetchEntries();
-      },
+    if (selectedDate.value !== selectedEndDate.value) return;
+    const date = selectedDate.value;
+    const requestId = entriesRequestId;
+    await deleteDate(date, async (data) => {
+      const stale = isDisposed || requestId !== entriesRequestId;
+      ipView.invalidateOverview(stale);
+      if (stale) return;
+      searchQuery.value = "";
+      selectedStatus.value = "all";
+      selectedLoggedIn.value = "all";
+      selectedCredential.value = "all";
+      selectedWAFStatus.value = "all";
+      selectedDate.value =
+        data.available_dates.find((item) => item !== date) || serverToday.value;
+      selectedEndDate.value = selectedDate.value;
+      await Promise.all([ipView.syncDateQuery(), refreshAll()]);
     });
   };
 
@@ -338,13 +319,15 @@ export const useGatewayRequestLogsResource = () => {
     loading.value = true;
     await Promise.all([
       fetchDates(
-        typeof route.query.log_date === "string"
-          ? route.query.log_date
+        typeof route.query.log_from === "string" ||
+          typeof route.query.log_date === "string"
+          ? selectedDate.value
           : undefined,
       ),
       fetchCredentialOptions(),
     ]);
     if (isDisposed || requestId !== entriesRequestId) return;
+    await ipView.syncDateQuery();
     await fetchEntries();
   });
   onBeforeUnmount(() => {
@@ -354,6 +337,7 @@ export const useGatewayRequestLogsResource = () => {
 
   return {
     ...ipView,
+    ...filterActions,
     retry: fetchEntries,
     activeCredentialLabel,
     activeLoggedInLabel,
@@ -368,16 +352,9 @@ export const useGatewayRequestLogsResource = () => {
     deleteSelectedDate,
     entries,
     getSnapshot,
-    handleCredentialChange,
-    handleDateChange,
-    handleLimitChange,
     handleLoadFirst,
     handleLoadNewer,
     handleLoadOlder,
-    handleLoggedInChange,
-    handleSearch,
-    handleStatusChange,
-    handleWAFStatusChange,
     isDeleting,
     isLoggingEnabled,
     limit,
@@ -387,6 +364,9 @@ export const useGatewayRequestLogsResource = () => {
     searchQuery,
     selectedCredential,
     selectedDate,
+    selectedEndDate,
+    serverToday,
+    rangeLabel,
     selectedLoggedIn,
     selectedLogEntryKeys,
     selectedStatus,

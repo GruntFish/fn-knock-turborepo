@@ -22,6 +22,7 @@ use crate::{
 
 mod analytics;
 mod ip_groups;
+mod range;
 
 const GATEWAY_LOG_ANALYTICS_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -37,6 +38,9 @@ fn gateway_logs_text(translator: &Translator, key: &str) -> String {
 #[derive(Clone, Default, Deserialize)]
 struct GatewayLogQuery {
     date: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    order: Option<String>,
     pagination: Option<String>,
     page: Option<String>,
     limit: Option<String>,
@@ -285,6 +289,12 @@ async fn dates(State(state): State<AppState>) -> Response {
 #[utoipa::path(get, path = "/api/admin/gateway-logs/entries", tag = "gateway-logs", operation_id = "get_api_admin_gateway_logs_entries", responses((status = 200, description = "Gateway log entries"), (status = 409, description = "Log cursor expired; refresh the log list")))]
 async fn entries(State(state): State<AppState>, Query(query): Query<GatewayLogQuery>) -> Response {
     let translator = Translator::from_state(&state).await;
+    if let Err(error) = range::validate(&query) {
+        return response::error(StatusCode::BAD_REQUEST, error.to_string());
+    }
+    if query.sort.as_deref().is_some_and(|sort| sort != "time") {
+        return response::error(StatusCode::BAD_REQUEST, "invalid sort");
+    }
     let trace_id = query
         .trace_id
         .as_deref()
@@ -299,13 +309,29 @@ async fn entries(State(state): State<AppState>, Query(query): Query<GatewayLogQu
     let waf_status = normalize_waf_status_filter(query.waf_status.as_deref());
     let result = if let Some(trace_id) = trace_id {
         find_gateway_log_entry(&state, trace_id).await
-    } else if waf_status.is_some() || query.client_ip.is_some() {
-        tokio::time::timeout(
-            GATEWAY_LOG_ANALYTICS_TIMEOUT,
-            get_entries_with_filters(&state, query, waf_status),
-        )
+    } else if waf_status.is_some()
+        || query.client_ip.is_some()
+        || query.from.is_some()
+        || query.sort.is_some()
+        || query.order.is_some()
+    {
+        match tokio::time::timeout(GATEWAY_LOG_ANALYTICS_TIMEOUT, async {
+            if query.from.is_none() && query.sort.is_none() && query.order.is_none() {
+                get_entries_with_filters(&state, query, waf_status).await
+            } else {
+                go_log_entries(&state, &query, true).await
+            }
+        })
         .await
-        .unwrap_or_else(|error| Err(error.into()))
+        {
+            Ok(result) => result,
+            Err(_) => {
+                return response::error(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    gateway_logs_text(&translator, "readEntriesFailed"),
+                );
+            }
+        }
     } else {
         go_log_entries(&state, &query, true).await
     };
@@ -509,7 +535,6 @@ where
     let mut next_cursor = String::new();
     let mut has_more = false;
     query.pagination = Some("cursor".to_string());
-    query.waf_status = None;
 
     loop {
         let remaining = (limit - items.len() as i64).max(1);
@@ -517,7 +542,9 @@ where
         query.cursor = raw_cursor.clone();
         let data = fetch(query.clone()).await?;
         if base_data.is_none() {
-            if let Some(date) = data.get("date").and_then(Value::as_str) {
+            if query.from.is_none()
+                && let Some(date) = data.get("date").and_then(Value::as_str)
+            {
                 query.date = Some(date.to_string());
             }
             base_data = Some(data.clone());
@@ -680,13 +707,25 @@ async fn go_log_entries(
         credential: query.credential.clone().unwrap_or_default(),
         cursor: query.cursor.clone().unwrap_or_default(),
         pagination,
+        from: query.from.clone().unwrap_or_default(),
+        to: query.to.clone().unwrap_or_default(),
+        sort: query.sort.clone().unwrap_or_default(),
+        order: query.order.clone().unwrap_or_default(),
+        client_ip: query.client_ip.clone().unwrap_or_default(),
+        waf_status: normalize_waf_status_filter(query.waf_status.as_deref())
+            .unwrap_or_default()
+            .to_string(),
     };
-    state
-        .gateway
-        .client
-        .query_log_entries(rpc_query)
-        .await
-        .and_then(go_backend_data)
+    let result = if query.from.is_some() || query.sort.is_some() || query.order.is_some() {
+        state
+            .gateway
+            .client
+            .query_log_entries_with_timeout(rpc_query, GATEWAY_LOG_ANALYTICS_TIMEOUT)
+            .await
+    } else {
+        state.gateway.client.query_log_entries(rpc_query).await
+    };
+    result.and_then(go_backend_data)
 }
 
 fn go_backend_data(mut value: Value) -> anyhow::Result<Value> {
@@ -878,6 +917,11 @@ fn runtime_i64_field(value: &Value, key: &str) -> i64 {
 }
 
 fn hydrate_entries_response(mut data: Value) -> Value {
+    let date = data.get("date").cloned().unwrap_or(json!(""));
+    if let Some(object) = data.as_object_mut() {
+        object.entry("from").or_insert_with(|| date.clone());
+        object.entry("to").or_insert(date);
+    }
     if let Some(items) = data.get_mut("items").and_then(Value::as_array_mut) {
         for entry in items {
             hydrate_gateway_log_entry(entry);
@@ -900,7 +944,7 @@ fn infer_gateway_log_client_ip(entry: &Value) -> String {
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let normalized = normalize_ip(client_ip);
+        let normalized = ip_groups::canonical_ip(client_ip);
         if !normalized.is_empty() {
             return normalized;
         }
@@ -916,7 +960,7 @@ fn infer_gateway_log_client_ip(entry: &Value) -> String {
     }
 
     let remote_raw = entry.get("remote_ip").and_then(Value::as_str).unwrap_or("");
-    let remote_ip = normalize_ip(remote_raw);
+    let remote_ip = ip_groups::canonical_ip(remote_raw);
     let proxy_header_candidates = split_forwarded_ips(entry.get("x_forwarded_for"))
         .into_iter()
         .chain(split_forwarded_ips(entry.get("x_real_ip")))
@@ -936,7 +980,7 @@ fn split_forwarded_ips(value: Option<&Value>) -> Vec<String> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .split(',')
-        .map(|item| normalize_ip(item.trim()))
+        .map(|item| ip_groups::canonical_ip(item.trim()))
         .filter(|item| !item.is_empty())
         .collect()
 }
@@ -1412,6 +1456,9 @@ mod tests {
             waf_status: Some("has_waf".to_string()),
             client_ip: None,
             sort: None,
+            from: None,
+            to: None,
+            order: None,
             trace_id: Some("trc_3f93d40a-89ea-4dbe-a04f-67692778d973".to_string()),
         };
         let output = gateway_log_query_string(&query, true).unwrap();
@@ -1441,6 +1488,9 @@ mod tests {
             trace_id: None,
             client_ip: None,
             sort: None,
+            from: None,
+            to: None,
+            order: None,
         };
         let output = gateway_log_query_string(&query, true).unwrap();
         assert!(output.contains("page="));

@@ -36,6 +36,8 @@ import GatewayLogIpGroupsView from "../src/views/gateway-request-logs/GatewayLog
 
 const groupData = (page = 1): GatewayLogIpGroups => ({
   date: "2026-09-21",
+  from: "2026-09-21",
+  to: "2026-09-21",
   page,
   limit: 20,
   total: 45,
@@ -97,7 +99,9 @@ beforeEach(() => {
   });
   api.credentials.mockResolvedValue({ credentials: [] });
   api.entries.mockImplementation(async (params) => ({
-    date: params.date,
+    date: params.from,
+    from: params.from,
+    to: params.to,
     available_dates: ["2026-09-21", "2026-09-20"],
     items: [],
     next_cursor: "",
@@ -113,7 +117,8 @@ describe("gateway IP view", () => {
     await resource.setViewMode("ips");
     expect(api.groups).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        date: "2026-09-21",
+        from: "2026-09-21",
+        to: "2026-09-21",
         page: 1,
         sort: "requests",
       }),
@@ -146,7 +151,8 @@ describe("gateway IP view", () => {
         client_ip: "36.142.108.111",
         search: "/api",
         status: "4xx",
-        date: "2026-09-21",
+        from: "2026-09-21",
+        to: "2026-09-21",
         cursor: undefined,
       }),
     );
@@ -175,7 +181,11 @@ describe("gateway IP view", () => {
       "/logs?client_ip=unknown&log_date=2026-09-20",
     );
     expect(api.entries).toHaveBeenLastCalledWith(
-      expect.objectContaining({ date: "2026-09-20", client_ip: "unknown" }),
+      expect.objectContaining({
+        from: "2026-09-20",
+        to: "2026-09-20",
+        client_ip: "unknown",
+      }),
     );
     await resource.backToIps();
     await flushPromises();
@@ -191,7 +201,7 @@ describe("gateway IP view", () => {
     const before = api.entries.mock.calls.length;
     await resource.handleDateChange("2026-09-20");
     await flushPromises();
-    expect(router.currentRoute.value.query.log_date).toBe("2026-09-20");
+    expect(router.currentRoute.value.query.log_from).toBe("2026-09-20");
     expect(api.entries.mock.calls.length).toBe(before + 1);
     await router.push({
       query: { client_ip: "36.142.108.111", log_date: "2026-09-21" },
@@ -248,12 +258,40 @@ describe("gateway IP view", () => {
     });
     await resource.deleteSelectedDate();
     expect(resource.detailRequests.value).toBe(501);
-    expect(router.currentRoute.value.query.log_date).toBe("2026-09-20");
+    expect(router.currentRoute.value.query.log_from).toBe("2026-09-20");
     const calls = api.groups.mock.calls.length;
     await resource.backToIps();
     await flushPromises();
     expect(api.groups.mock.calls.length).toBeGreaterThan(calls);
     expect(resource.selectedDate.value).toBe("2026-09-20");
+    wrapper.unmount();
+  });
+
+  it("does not overwrite a new query when an earlier deletion finishes", async () => {
+    const { resource, wrapper, router } = await setup();
+    let resolve!: (value: unknown) => void;
+    api.deleteDate.mockImplementationOnce(
+      () => new Promise((done) => { resolve = done; }),
+    );
+    const deletion = resource.deleteSelectedDate();
+    await resource.handleRangeChange("2026-09-18", "2026-09-20");
+    await resource.handleStatusChange("4xx");
+    resolve({ deleted: true, available_dates: ["2026-09-19"] });
+    await deletion;
+    expect(resource.selectedDate.value).toBe("2026-09-18");
+    expect(resource.selectedEndDate.value).toBe("2026-09-20");
+    expect(resource.selectedStatus.value).toBe("4xx");
+    expect(router.currentRoute.value.query.log_from).toBe("2026-09-18");
+    wrapper.unmount();
+  });
+
+  it("uses the server day after deleting the last available date", async () => {
+    const { resource, wrapper } = await setup("/logs?log_date=2026-09-20");
+    api.deleteDate.mockResolvedValueOnce({ deleted: true, available_dates: [] });
+    await resource.deleteSelectedDate();
+    expect(resource.selectedDate.value).toBe("2026-09-21");
+    expect(resource.selectedEndDate.value).toBe("2026-09-21");
+    expect(resource.loadError.value).toBe(false);
     wrapper.unmount();
   });
 
@@ -294,6 +332,13 @@ describe("gateway IP view", () => {
         data: groupData(),
         loading: false,
         sort: "requests",
+        order: "desc",
+        selectedKeys: new Set<string>(),
+        allSelected: false,
+        isBlacklisted: () => false,
+        mutating: false,
+        block: vi.fn(),
+        release: vi.fn(),
         location: () => "Gansu",
       },
       global: { plugins: [i18n()] },
@@ -303,6 +348,133 @@ describe("gateway IP view", () => {
       .find((node) => node.text() === "36.142.108.111");
     await button?.trigger("click");
     expect(wrapper.emitted("open")?.[0]).toEqual(["36.142.108.111"]);
+    wrapper.unmount();
+  });
+});
+
+describe("gateway log date ranges and ordering", () => {
+  it("shares the range with groups and details and restores order, page and filters on return", async () => {
+    const { resource, router, wrapper } = await setup();
+    await resource.setViewMode("ips");
+    await resource.handleRangeChange("2026-09-15", "2026-09-21");
+    await resource.handleIpSortChange("last_seen");
+    await resource.handleOrderChange("asc");
+    await resource.handleLoadOlder();
+    expect(api.groups).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        from: "2026-09-15",
+        to: "2026-09-21",
+        sort: "last_seen",
+        order: "asc",
+        page: 2,
+      }),
+    );
+    await resource.openIp("36.142.108.111");
+    await flushPromises();
+    expect(api.entries).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        from: "2026-09-15",
+        to: "2026-09-21",
+        sort: "time",
+        order: "desc",
+        client_ip: "36.142.108.111",
+      }),
+    );
+    await resource.handleOrderChange("asc");
+    expect(router.currentRoute.value.query.log_order).toBe("asc");
+    await resource.handleRangeChange("2026-09-20", "2026-09-21");
+    await resource.backToIps();
+    await flushPromises();
+    expect(resource.selectedDate.value).toBe("2026-09-15");
+    expect(resource.selectedEndDate.value).toBe("2026-09-21");
+    expect(resource.ipOrder.value).toBe("asc");
+    expect(resource.ipPage.value).toBe(2);
+    expect(resource.requestOrder.value).toBe("desc");
+    expect(router.currentRoute.value.query.log_from).toBe("2026-09-15");
+    wrapper.unmount();
+  });
+
+  it("hydrates direct range/order links and follows browser navigation", async () => {
+    const { resource, router, wrapper } = await setup(
+      "/logs?log_from=2026-09-15&log_to=2026-09-21&log_order=asc&client_ip=unknown",
+    );
+    expect(api.entries).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        from: "2026-09-15",
+        to: "2026-09-21",
+        order: "asc",
+        client_ip: "unknown",
+      }),
+    );
+    await router.push(
+      "/logs?log_from=2026-09-19&log_to=2026-09-20&log_order=desc&client_ip=unknown",
+    );
+    await flushPromises();
+    expect(resource.selectedDate.value).toBe("2026-09-19");
+    expect(resource.requestOrder.value).toBe("desc");
+    router.back();
+    await flushPromises();
+    expect(resource.selectedDate.value).toBe("2026-09-15");
+    expect(resource.requestOrder.value).toBe("asc");
+    wrapper.unmount();
+  });
+
+  it("rejects invalid ranges, supports 30 days, and prevents range deletion", async () => {
+    const { resource, wrapper } = await setup();
+    const before = api.entries.mock.calls.length;
+    for (const [from, to] of [
+      ["2026-08-22", "2026-09-21"],
+      ["2026-09-22", "2026-09-21"],
+      ["2026-02-30", "2026-03-01"],
+    ])
+      await resource.handleRangeChange(from!, to!);
+    expect(api.entries.mock.calls.length).toBe(before);
+    await resource.handleRangeChange("2026-08-23", "2026-09-21");
+    expect(api.entries).toHaveBeenLastCalledWith(
+      expect.objectContaining({ from: "2026-08-23", to: "2026-09-21" }),
+    );
+    await resource.deleteSelectedDate();
+    expect(api.deleteDate).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("clears selection when changing filters, ordering, dates, views, or pages", async () => {
+    const { resource, wrapper } = await setup();
+    await resource.setViewMode("ips");
+    for (const change of [
+      () => resource.handleStatusChange("4xx"),
+      () => resource.handleIpSortChange("last_seen"),
+      () => resource.handleOrderChange("asc"),
+      () => resource.handleRangeChange("2026-09-20", "2026-09-21"),
+      () => resource.handleLoadOlder(),
+      () => resource.setViewMode("requests"),
+    ]) {
+      resource.selectedLogEntryKeys.value = new Set(["36.142.108.111"]);
+      await change();
+      expect(resource.selectedLogEntryKeys.value.size).toBe(0);
+    }
+    wrapper.unmount();
+  });
+
+  it.each(["first", "newer"] as const)("pins the first-page snapshot when navigating %s", async (direction) => {
+    api.entries.mockResolvedValueOnce({
+      date: "2026-09-21",
+      cursor: "snapshot-first",
+      next_cursor: "snapshot-next",
+      items: [],
+      available_dates: [],
+    });
+    const { resource, wrapper } = await setup();
+    expect(resource.currentCursor.value).toBe("snapshot-first");
+    await resource.handleLoadOlder();
+    expect(api.entries).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: "snapshot-next" }),
+    );
+    if (direction === "first") await resource.handleLoadFirst();
+    else await resource.handleLoadNewer();
+    expect(api.entries).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: "snapshot-first" }),
+    );
     wrapper.unmount();
   });
 });

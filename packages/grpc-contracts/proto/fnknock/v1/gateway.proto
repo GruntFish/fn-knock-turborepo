@@ -10,7 +10,7 @@ import "google/protobuf/empty.proto";
 // Generated clients and packaging tools consume this stable enum member.
 enum ControlApiVersion {
   CONTROL_API_VERSION_UNSPECIFIED = 0;
-  CONTROL_API_VERSION_CURRENT = 26;
+  CONTROL_API_VERSION_CURRENT = 27;
 }
 
 message RpcStatus {
@@ -662,6 +662,12 @@ message GatewayLogQuery {
   string credential = 7;
   string cursor = 8;
   string pagination = 9;
+  string from = 10;
+  string to = 11;
+  string sort = 12;
+  string order = 13;
+  string client_ip = 14;
+  string waf_status = 15;
 }
 
 message GatewayLogQueryResult {
@@ -676,6 +682,8 @@ message GatewayLogQueryResult {
   string next_cursor = 9;
   bool has_more = 10;
   repeated GatewayLogEntry items = 11;
+  string from = 12;
+  string to = 13;
 }
 
 message GatewayLogTraceRequest {

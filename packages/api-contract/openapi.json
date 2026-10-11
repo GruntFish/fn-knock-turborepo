@@ -12138,6 +12138,9 @@
           "date": {
             "type": "string"
           },
+          "from": {
+            "type": "string"
+          },
           "has_more": {
             "type": "boolean"
           },
@@ -12168,12 +12171,17 @@
             ],
             "type": "string"
           },
+          "to": {
+            "type": "string"
+          },
           "total": {
             "format": "int32",
             "type": "integer"
           }
         },
         "required": [
+          "from",
+          "to",
           "date",
           "logs_dir",
           "available_dates",
@@ -12487,6 +12495,9 @@
           "date": {
             "type": "string"
           },
+          "from": {
+            "type": "string"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/GatewayLogIpGroupData"
@@ -12500,6 +12511,9 @@
           "page": {
             "minimum": 0,
             "type": "integer"
+          },
+          "to": {
+            "type": "string"
           },
           "total": {
             "minimum": 0,
@@ -12516,6 +12530,8 @@
           }
         },
         "required": [
+          "from",
+          "to",
           "date",
           "page",
           "limit",
@@ -42395,6 +42411,37 @@
         "parameters": [
           {
             "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "date",
             "required": false,
             "schema": {
@@ -42498,6 +42545,17 @@
             }
           },
           {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "enum": [
+                "time"
+              ],
+              "type": "string"
+            }
+          },
+          {
             "description": "Exact client IP, or unknown for missing client IP",
             "in": "query",
             "name": "client_ip",
@@ -42561,6 +42619,37 @@
         "description": "配置、检索和分析网关访问日志。。`GET /api/admin/gateway-logs/ip-groups` 用于读取当前状态、配置或导出内容，不会主动修改服务配置。 该操作不要求 JSON 请求体。 成功响应通常使用标准管理端 JSON 信封，具体 `data` 结构请查看响应 schema。",
         "operationId": "get_api_admin_gateway_logs_ip_groups",
         "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
           {
             "in": "query",
             "name": "date",

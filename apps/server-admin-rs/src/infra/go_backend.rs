@@ -2436,6 +2436,8 @@ fn log_analytics_to_json(result: crate::grpc_proto::GatewayLogAnalyticsResult) -
 
 fn log_query_to_json(result: crate::grpc_proto::GatewayLogQueryResult) -> Value {
     json!({
+        "from": if result.from.is_empty() { &result.date } else { &result.from },
+        "to": if result.to.is_empty() { &result.date } else { &result.to },
         "date": result.date,
         "logs_dir": result.logs_dir,
         "available_dates": result.available_dates,

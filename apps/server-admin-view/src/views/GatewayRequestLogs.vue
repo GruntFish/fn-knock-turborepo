@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import GatewayLogDetails from "./gateway-request-logs/GatewayLogDetails.vue";
 import GatewayLogViewHeader from "./gateway-request-logs/GatewayLogViewHeader.vue";
 import { useGatewayLogIpPresentation } from "./gateway-request-logs/useGatewayLogIpPresentation";
@@ -12,11 +12,7 @@ import GatewayRequestLogsActions from "./gateway-request-logs/GatewayRequestLogs
 import GatewayRequestLogsFilters from "./gateway-request-logs/GatewayRequestLogsFilters.vue";
 import GatewayRequestLogsPagination from "./gateway-request-logs/GatewayRequestLogsPagination.vue";
 import GatewayRequestLogsTable from "./gateway-request-logs/GatewayRequestLogsTable.vue";
-import {
-  buildGatewayLogSelectionKey,
-  getEntryActionIp,
-  getEntryClientIp,
-} from "./gateway-request-logs/model";
+import { useGatewayRequestLogRows } from "./gateway-request-logs/useGatewayRequestLogRows";
 import { useGatewayLogIpSelection } from "./gateway-request-logs/useGatewayLogIpSelection";
 import { useGatewayRequestLogsResource } from "./gateway-request-logs/useGatewayRequestLogsResource";
 const router = useRouter();
@@ -30,6 +26,9 @@ const {
   isIpOverview,
   ipGroups,
   ipSort,
+  ipOrder,
+  requestOrder,
+  handleOrderChange,
   detailRequests,
   loadError,
   hasFilters,
@@ -46,11 +45,9 @@ const {
   canLoadNewer,
   canLoadOlder,
   credentialFilterOptions,
-  currentCursor,
   cursorPageLabel,
   deleteSelectedDate,
   entries,
-  getSnapshot,
   handleCredentialChange,
   handleDateChange,
   handleLimitChange,
@@ -69,6 +66,10 @@ const {
   searchQuery,
   selectedCredential,
   selectedDate,
+  selectedEndDate,
+  serverToday,
+  rangeLabel,
+  handleRangeChange,
   selectedLoggedIn,
   selectedLogEntryKeys,
   selectedStatus,
@@ -86,39 +87,13 @@ const goToWAFTrace = (traceId?: string) => {
   if (!traceId) return;
   router.push(`/traces/${encodeURIComponent(traceId)}`);
 };
-const getEntrySelectionKey = (entry: GatewayLogEntry, index: number) =>
-  buildGatewayLogSelectionKey(entry, index, currentCursor.value);
-const getEntryIpSnapshot = (entry: GatewayLogEntry) =>
-  getSnapshot(getEntryClientIp(entry));
-const getEntryIpLocation = (entry: GatewayLogEntry) =>
-  getEntryIpSnapshot(entry)?.location || entry.ipLocation || "";
-const getEntryIpLocationText = (entry: GatewayLogEntry) => {
-  const snapshot = getEntryIpSnapshot(entry);
-  const location = snapshot?.location || entry.ipLocation || "";
-  if (location) return location;
-  if (snapshot?.status === "queued" || snapshot?.status === "processing") {
-    return t("admin.hostActiveIps.resolving");
-  }
-  if (snapshot?.status === "failed") {
-    return t("admin.hostActiveIps.unavailable");
-  }
-  return "";
-};
-const getConnectionSourceText = (entry: GatewayLogEntry) => {
-  const clientIp = getEntryClientIp(entry);
-  const remoteIp = entry.remote_ip || "";
-  if (!remoteIp || remoteIp === clientIp) return "";
-  return t("admin.gatewayRequestLogs.connectionSource", { ip: remoteIp });
-};
-const displayedEntries = computed(() =>
-  entries.value.map((entry, index) => ({
-    ...entry,
-    client_ip: getEntryClientIp(entry),
-    ipLocation: getEntryIpLocation(entry),
-    actionIp: getEntryActionIp(entry),
-    selectionKey: getEntrySelectionKey(entry, index),
-  })),
-);
+const {
+  displayedEntries,
+  selectableEntries,
+  getEntryIpLocationText,
+  getConnectionSourceText,
+  activeEntryWithIpLocation,
+} = useGatewayRequestLogRows(resource, activeEntry);
 
 const {
   blockIpsFromLogs,
@@ -133,20 +108,10 @@ const {
   selectedUnblockedLogIps,
   toggleLogEntrySelection,
 } = useGatewayLogIpSelection({
-  displayedEntries,
+  displayedEntries: selectableEntries,
   selectedLogEntryKeys,
   translate: (key, params) => (params ? t(key, params) : t(key)),
 });
-
-const activeEntryWithIpLocation = computed(() =>
-  activeEntry.value
-    ? {
-        ...activeEntry.value,
-        client_ip: getEntryClientIp(activeEntry.value),
-        ipLocation: getEntryIpLocation(activeEntry.value),
-      }
-    : null,
-);
 </script>
 
 <template>
@@ -154,7 +119,7 @@ const activeEntryWithIpLocation = computed(() =>
     <GatewayLogViewHeader
       :client-ip="clientIp"
       :view-mode="viewMode"
-      :selected-date="selectedDate"
+      :selected-date="rangeLabel"
       :detail-requests="detailRequests"
       :loading="loading"
       :has-filters="hasFilters"
@@ -167,6 +132,7 @@ const activeEntryWithIpLocation = computed(() =>
       <GatewayRequestLogsActions
         :block-ips="blockIpsFromLogs"
         :delete-selected-date="deleteSelectedDate"
+        :can-delete-date="selectedDate === selectedEndDate"
         :is-blocking="isBlockingIps"
         :is-deleting="isDeleting"
         :is-mutating="isMutatingBlacklistIps"
@@ -174,9 +140,9 @@ const activeEntryWithIpLocation = computed(() =>
         :loading="loading"
         :refresh="refreshAll"
         :release-ips="releaseIpsFromLogs"
-        :selected-blocked-ips="isIpOverview ? [] : selectedBlockedLogIps"
+        :selected-blocked-ips="selectedBlockedLogIps"
         :selected-date="selectedDate"
-        :selected-unblocked-ips="isIpOverview ? [] : selectedUnblockedLogIps"
+        :selected-unblocked-ips="selectedUnblockedLogIps"
       />
     </Teleport>
 
@@ -196,6 +162,12 @@ const activeEntryWithIpLocation = computed(() =>
         :entries-count="entries.length"
         :handle-credential-change="handleCredentialChange"
         :handle-date-change="handleDateChange"
+        :handle-range-change="handleRangeChange"
+        :selected-end-date="selectedEndDate"
+        :server-today="serverToday"
+        :show-request-sort="!isIpOverview"
+        :request-order="requestOrder"
+        :handle-order-change="handleOrderChange"
         :handle-logged-in-change="handleLoggedInChange"
         :handle-search="handleSearch"
         :handle-status-change="handleStatusChange"
@@ -223,6 +195,16 @@ const activeEntryWithIpLocation = computed(() =>
         :data="ipGroups"
         :loading="loading"
         :sort="ipSort"
+        :order="ipOrder"
+        :selected-keys="selectedLogEntryKeys"
+        :all-selected="isAllDisplayedRowsSelected"
+        :is-blacklisted="isGeneralBlacklisted"
+        :mutating="isMutatingBlacklistIps"
+        :block="blockIpsFromLogs"
+        :release="releaseIpsFromLogs"
+        @select="toggleLogEntrySelection"
+        @select-all="isAllDisplayedRowsSelected = $event"
+        @order="handleOrderChange"
         :location="ipLocation"
         @open="handleOpenIp"
         @sort="handleIpSortChange"

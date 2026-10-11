@@ -71,6 +71,14 @@ impl GoBackendClient {
         status_value("query_log_entries", result)
     }
 
+    pub async fn query_log_entries_with_timeout(
+        &self,
+        query: GatewayLogQuery,
+        timeout: Duration,
+    ) -> anyhow::Result<Value> {
+        self.with_timeout(timeout)?.query_log_entries(query).await
+    }
+
     pub async fn find_log_entry_by_trace_id(&self, trace_id: &str) -> anyhow::Result<Value> {
         let mut client = self.logs.clone();
         let result = match client

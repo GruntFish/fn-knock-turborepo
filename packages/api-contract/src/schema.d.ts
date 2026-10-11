@@ -10571,6 +10571,7 @@ export interface components {
             available_dates: string[];
             cursor: string;
             date: string;
+            from: string;
             has_more: boolean;
             items: components["schemas"]["GatewayLogEntryData"][];
             /** Format: int32 */
@@ -10581,6 +10582,7 @@ export interface components {
             page: number;
             /** @enum {string} */
             pagination: "page" | "cursor";
+            to: string;
             /** Format: int32 */
             total: number;
         };
@@ -10662,9 +10664,11 @@ export interface components {
         };
         GatewayLogIpGroupsData: {
             date: string;
+            from: string;
             items: components["schemas"]["GatewayLogIpGroupData"][];
             limit: number;
             page: number;
+            to: string;
             total: number;
             total_ips: number;
             /** Format: int64 */
@@ -23491,6 +23495,9 @@ export interface operations {
     get_api_admin_gateway_logs_entries: {
         parameters: {
             query?: {
+                from?: string;
+                to?: string;
+                order?: "asc" | "desc";
                 date?: string;
                 pagination?: "page" | "cursor";
                 page?: number;
@@ -23502,6 +23509,7 @@ export interface operations {
                 credential?: string;
                 waf_status?: "has_waf" | "none";
                 trace_id?: string;
+                sort?: "time";
                 /** @description Exact client IP, or unknown for missing client IP */
                 client_ip?: string;
             };
@@ -23581,6 +23589,9 @@ export interface operations {
     get_api_admin_gateway_logs_ip_groups: {
         parameters: {
             query?: {
+                from?: string;
+                to?: string;
+                order?: "asc" | "desc";
                 date?: string;
                 page?: number;
                 limit?: string;

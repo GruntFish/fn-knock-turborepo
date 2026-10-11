@@ -51,6 +51,8 @@ const render = (view: string, value = timestamp) => {
           props: {
             data: {
               date: "2026-09-21",
+              from: "2026-09-21",
+              to: "2026-09-21",
               page: 1,
               limit: 20,
               total: 1,
@@ -71,6 +73,13 @@ const render = (view: string, value = timestamp) => {
             },
             loading: false,
             sort: "requests",
+            order: "desc",
+            selectedKeys: new Set<string>(),
+            allSelected: false,
+            isBlacklisted: () => false,
+            mutating: false,
+            block: vi.fn(),
+            release: vi.fn(),
             location: () => "",
           },
         })

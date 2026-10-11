@@ -5646,11 +5646,24 @@ export const jaJPAdmin = {
     },
   },
   gatewayRequestLogs: {
+    range: {
+      from: "開始日",
+      to: "終了日",
+      apply: "適用",
+      invalid: "今日以前の有効な日付範囲を選択してください（最大30日）。",
+      deleteSingleDay: "ログを削除するには1日を選択してください",
+      selectPage: "現在のページを選択",
+    },
+    timeOrder: {
+      label: "アクセス日時の順序",
+      desc: "新しい順",
+      asc: "古い順",
+    },
     ipView: {
       viewLabel: "表示方法",
       individual: "リクエスト別",
       grouped: "IP 別",
-      hint: "選択した日付と条件に一致する保存済みリクエストを IP ごとに集計します。",
+      hint: "IP ごとに1行で、選択した期間の条件に一致する保存済みリクエストを集計します。",
       sortLabel: "並び順",
       requests: "リクエスト数",
       hosts: "サイト",
@@ -5662,9 +5675,9 @@ export const jaJPAdmin = {
       open: "リクエストを表示",
       back: "IP 一覧に戻る",
       unknown: "不明な送信元",
-      showAll: "この IP の当日の全リクエストを表示",
+      showAll: "選択した期間のこの IP のすべてのリクエストを表示",
       retry: "再試行",
-      loading: "選択した日の全リクエストを集計中…",
+      loading: "選択した期間のすべてのリクエストを集計中…",
       summary: "{date} · {ips} IP · {requests} リクエスト",
       filteredSummary:
         "{date} · 絞り込み結果：{ips} IP · {requests} リクエスト",
@@ -5681,8 +5694,7 @@ export const jaJPAdmin = {
       },
     },
     title: "リクエストログ",
-    description:
-      "日ごとにフィルタリングして、認証、ルーティング、ステータスをすばやく確認します。",
+    description: "日付範囲で絞り込み、認証、ルーティング、ステータスを確認します。",
     cursorPage: "区間 {page}",
     deleteFailed: "削除に失敗しました",
     deleteFailedDescription: "リクエストログの削除に失敗しました",

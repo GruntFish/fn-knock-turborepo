@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import RefreshButton from "@/components/RefreshButton.vue";
 
 defineProps<{
+  canDeleteDate: boolean;
   blockIps: (ips: string[]) => Promise<void> | void;
   deleteSelectedDate: () => Promise<void> | void;
   isBlocking: boolean;
@@ -32,6 +33,7 @@ const { t } = useI18n();
     />
     <ConfirmDangerPopover
       v-if="selectedUnblockedIps.length > 0"
+      :confirm-text="t('common.confirm')"
       :title="
         t('admin.gatewayRequestLogs.blacklistSelectedTitle', {
           count: selectedUnblockedIps.length,
@@ -59,6 +61,7 @@ const { t } = useI18n();
     </ConfirmDangerPopover>
     <ConfirmDangerPopover
       v-if="selectedBlockedIps.length > 0"
+      :confirm-text="t('common.confirm')"
       :title="
         t('admin.gatewayRequestLogs.unblacklistSelectedTitle', {
           count: selectedBlockedIps.length,
@@ -85,6 +88,7 @@ const { t } = useI18n();
       </template>
     </ConfirmDangerPopover>
     <ConfirmDangerPopover
+      v-if="canDeleteDate"
       :title="
         t('admin.gatewayRequestLogs.deleteDateTitle', { date: selectedDate })
       "
@@ -104,5 +108,8 @@ const { t } = useI18n();
         </Button>
       </template>
     </ConfirmDangerPopover>
+    <span v-if="!canDeleteDate" class="text-xs text-muted-foreground">{{
+      t("admin.gatewayRequestLogs.range.deleteSingleDay")
+    }}</span>
   </div>
 </template>

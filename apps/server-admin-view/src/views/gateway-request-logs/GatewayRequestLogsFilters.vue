@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import GatewayLogRangeControls from "./GatewayLogRangeControls.vue";
+import GatewayLogOrderSelect from "./GatewayLogOrderSelect.vue";
 import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
 import SearchInput from "@admin-shared/components/SearchInput.vue";
@@ -34,6 +36,12 @@ const { searchQuery } = defineProps<{
   searchQuery: string;
   selectedCredential: string;
   selectedDate: string;
+  selectedEndDate: string;
+  serverToday: string;
+  showRequestSort: boolean;
+  requestOrder: string;
+  handleRangeChange: (from: string, to: string) => Promise<void> | void;
+  handleOrderChange: (value: unknown) => Promise<void> | void;
   selectedLoggedIn: string;
   selectedStatus: string;
   selectedWafStatus: string;
@@ -43,6 +51,19 @@ const { t } = useI18n();
 </script>
 <template>
   <div class="border-b px-3 py-3 sm:px-4">
+    <div class="mb-3 flex flex-wrap items-end justify-between gap-2">
+      <GatewayLogRangeControls
+        :from="selectedDate"
+        :to="selectedEndDate"
+        :today="serverToday"
+        @change="handleRangeChange"
+      />
+      <GatewayLogOrderSelect
+        v-if="showRequestSort"
+        :order="requestOrder"
+        @change="handleOrderChange"
+      />
+    </div>
     <div class="flex flex-col gap-2 lg:flex-row lg:items-start">
       <SearchInput
         :model-value="searchQuery"
@@ -54,30 +75,6 @@ const { t } = useI18n();
       <div
         class="grid min-w-0 flex-1 grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap sm:justify-end"
       >
-        <Select
-          :model-value="selectedDate"
-          @update:model-value="handleDateChange"
-        >
-          <div class="order-1 w-full min-w-0 sm:order-none sm:w-[148px]">
-            <SelectTrigger
-              :aria-label="t('admin.gatewayRequestLogs.datePlaceholder')"
-              class="w-full min-w-0"
-            >
-              <SelectValue
-                :placeholder="t('admin.gatewayRequestLogs.datePlaceholder')"
-              />
-            </SelectTrigger>
-          </div>
-          <SelectContent>
-            <SelectItem
-              v-for="date in availableDates"
-              :key="date"
-              :value="date"
-            >
-              {{ date }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
         <Select
           :model-value="selectedStatus"
           @update:model-value="handleStatusChange"
