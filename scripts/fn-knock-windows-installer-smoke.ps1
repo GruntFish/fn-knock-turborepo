@@ -200,9 +200,25 @@ function Invoke-NativeProcess {
     if (-not $process.Start()) {
       throw "Failed to start native process: $FilePath"
     }
+    Write-Host "Started native process $($process.Id): $FilePath $($Arguments -join ' ')"
     $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
     $standardErrorTask = $process.StandardError.ReadToEndAsync()
+    if (-not $process.WaitForExit(300000)) {
+      Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessId -eq $process.Id -or $_.ParentProcessId -eq $process.Id } |
+        Select-Object ProcessId, ParentProcessId, Name, CommandLine |
+        Format-List | Out-Host
+      $process.Kill($true)
+      [void]$process.WaitForExit(10000)
+      throw "Native process exceeded 300 seconds: $FilePath $($Arguments -join ' ')"
+    }
     $process.WaitForExit()
+    Write-Host "Native process $($process.Id) exited with code $($process.ExitCode)"
+    # A descendant can inherit the output handles after the installer exits.
+    # Bound pipe draining as well so the catch block can print installer diagnostics.
+    if (-not $standardOutputTask.Wait(10000) -or -not $standardErrorTask.Wait(10000)) {
+      throw "Native process exited but its output pipes remained open: $FilePath"
+    }
     $standardOutput = $standardOutputTask.GetAwaiter().GetResult()
     $standardError = $standardErrorTask.GetAwaiter().GetResult()
     if (-not [string]::IsNullOrWhiteSpace($standardOutput)) {
