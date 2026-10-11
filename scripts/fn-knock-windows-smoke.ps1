@@ -562,8 +562,8 @@ try {
   Assert-File (Join-Path $BundleRoot "fn-knock-gateway.exe")
   Assert-File (Join-Path $BundleRoot "rust-acmesh.exe")
   $rustAcmeshVersion = & (Join-Path $BundleRoot "rust-acmesh.exe") version
-  Assert-Condition ($LASTEXITCODE -eq 0 -and $rustAcmeshVersion -match '^rust-acmesh ') `
-    "The bundled rust-acmesh.exe version check failed"
+  Assert-Condition ($LASTEXITCODE -eq 0 -and $rustAcmeshVersion -match '^rust-acmesh 0\.1\.2\s*$') `
+    "The bundled rust-acmesh.exe version check failed (expected 0.1.2)"
   Assert-File (Join-Path $BundleRoot "runtime\bundle.json")
   Assert-File $DesktopExecutable
 

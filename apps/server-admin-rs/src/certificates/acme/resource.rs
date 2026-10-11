@@ -24,6 +24,7 @@ pub(super) fn windows_acme_provider_ids() -> &'static [&'static str] {
         "dns_gd",
         "dns_huaweicloud",
         "dns_porkbun",
+        "dns_west_cn",
     ]
 }
 
@@ -121,12 +122,32 @@ mod tests {
 
     #[test]
     fn windows_provider_list_matches_native_client() {
-        assert_eq!(windows_acme_provider_ids().len(), 11);
+        assert_eq!(windows_acme_provider_ids().len(), 12);
         assert!(windows_acme_provider_ids().contains(&"dns_cf"));
         assert!(windows_acme_provider_ids().contains(&"dns_huaweicloud"));
+        assert!(windows_acme_provider_ids().contains(&"dns_west_cn"));
         assert!(!windows_acme_provider_ids().contains(&"dns_dgon"));
 
-        let catalog = windows_acme_dns_providers(&Translator::new("en"))
+        let t = Translator::new("zh-CN");
+        let providers = windows_acme_dns_providers(&t);
+        let west_cn = providers
+            .iter()
+            .find(|provider| provider["dnsType"] == "dns_west_cn")
+            .expect("Windows must expose West.cn credentials");
+        assert_eq!(west_cn["label"], "西部数码");
+        assert_eq!(
+            west_cn["group"],
+            t.t("server.acmeDnsProviders.groups.domestic")
+        );
+        assert_eq!(
+            west_cn["credentialSchemes"][0]["fields"],
+            json!([
+                { "key": "WEST_Username", "required": true },
+                { "key": "WEST_Key", "required": true },
+            ])
+        );
+
+        let catalog = providers
             .into_iter()
             .filter_map(|provider| {
                 provider

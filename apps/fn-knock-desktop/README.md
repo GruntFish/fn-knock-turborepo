@@ -39,3 +39,12 @@ npm ci
 4. 对最终字节生成 SHA-256；文件名和元数据均保留 `unsigned`，不得伪装为已签名包。
 
 `scripts/fn-knock-windows-finalize.ps1` 输出 EXE、SHA-256、unsigned `release.json` 和 unsigned `updater.json` 作为发布汇总输入；GitHub Release 仅公开 EXE，校验信息统一收录于根级 `release-manifest.json` 和 `SHA256SUMS`。Windows 安装包同时内置 `rust-acmesh.exe`，用于 DNS-01 证书申请。
+
+## 西部数码证书申请
+
+Windows 内置客户端为 [rust-acmesh v0.1.2](https://github.com/kci-lnk/acmesh-rs/releases/tag/v0.1.2) 的 x86_64 MSVC 版本。在证书申请中选择国内分组的“西部数码”（`dns_west_cn`），填写两项必需凭据：
+
+- `WEST_Username`：西部数码账号用户名。
+- `WEST_Key`：在西部数码 [API 接口设置](https://www.west.cn/manager/API/APIconfig.asp) 中配置的 API 明文密钥的 MD5 值。请在本地计算后填写，客户端直接使用该值，不会再次计算 MD5。
+
+西部数码 API 的 IP 白名单需包含运行服务的出口 IP，无需填写额外的 Zone 参数。凭据通过子进程环境变量传入，沿用 `--no-save-credentials`，不额外写入客户端的 `account.conf`。

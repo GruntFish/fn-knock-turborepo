@@ -89,6 +89,13 @@ pub(super) fn windows_acme_dns_providers(t: &Translator) -> Vec<Value> {
             ],
             &["PORKBUN_DOMAIN"],
         ),
+        simple_provider(
+            "dns_west_cn",
+            &t.t("server.acmeDnsProviders.labels.westCn"),
+            domestic,
+            &["WEST_Username", "WEST_Key"],
+            &[],
+        ),
     ];
     let default_credential_label = t.t("server.acmeDnsProviders.credentialSchemes.default");
     localize_default_credential_labels(&mut providers, &default_credential_label);
