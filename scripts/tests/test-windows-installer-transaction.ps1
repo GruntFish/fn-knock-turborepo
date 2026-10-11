@@ -49,6 +49,12 @@ $root = Join-Path ([IO.Path]::GetTempPath()) ('FnKnock-transaction-tests-' + [gu
 $fixtureKey = 'Software\FnKnock-transaction-tests-' + [guid]::NewGuid().ToString('N')
 $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
 try {
+  [void][IO.Directory]::CreateDirectory($root)
+  $hashFixture = Join-Path $root 'sha256-fixture'
+  [IO.File]::WriteAllBytes($hashFixture, [byte[]]@(97, 98, 99))
+  Assert ((Get-FnKnockFileSha256 $hashFixture) -ceq 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD') 'File SHA-256 does not match the known abc vector'
+  Remove-Item -LiteralPath $hashFixture
+  Expect-Failure { Get-FnKnockFileSha256 $hashFixture }
   $Action = 'test'
   $pending = Join-Path $root 'rollback\pending'
   $dataManifest = Join-Path $pending 'data-manifest.json'
