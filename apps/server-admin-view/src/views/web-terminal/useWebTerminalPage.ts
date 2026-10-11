@@ -98,7 +98,7 @@ export const useWebTerminalPage = () => {
       sessionsController.updateSessionPhase(sessionId, phase, details),
   });
 
-  const metricsController = useTerminalMetrics({
+  const resourceContext = {
     attachment: attachmentController.attachment,
     sessionId: sessionsController.selectedSessionId,
     connected: computed(
@@ -106,16 +106,9 @@ export const useWebTerminalPage = () => {
         attachmentController.connected.value &&
         sessionsController.selectedSession.value?.phase === "running",
     ),
-  });
-  const disksController = useTerminalDisks({
-    attachment: attachmentController.attachment,
-    sessionId: sessionsController.selectedSessionId,
-    connected: computed(
-      () =>
-        attachmentController.connected.value &&
-        sessionsController.selectedSession.value?.phase === "running",
-    ),
-  });
+  };
+  const metricsController = useTerminalMetrics(resourceContext);
+  const disksController = useTerminalDisks(resourceContext);
 
   const controllingAttachment = computed(() =>
     attachmentController.canInput.value
