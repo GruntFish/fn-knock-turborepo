@@ -80,7 +80,9 @@ pub(super) fn config_fence_snapshot_from_raw(
         .as_deref()
         .unwrap_or("0")
         .parse::<u64>()
-        .map_err(|_| crate::storage::storage_error("host mappings generation is invalid"))?;
+        .map_err(|_| {
+            crate::storage::invalid_configuration_error("host mappings generation is invalid")
+        })?;
     Ok(ConfigFenceSnapshot {
         config_raw,
         generation_raw,

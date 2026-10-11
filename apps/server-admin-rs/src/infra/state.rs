@@ -367,10 +367,18 @@ impl AppState {
                     "storage",
                     "open_failed",
                     "sqlite_open_failed",
-                    serde_json::Map::from_iter([(
-                        "result".to_string(),
-                        serde_json::json!("failed"),
-                    )]),
+                    serde_json::Map::from_iter([
+                        ("result".to_string(), serde_json::json!("failed")),
+                        (
+                            "failure".to_string(),
+                            serde_json::to_value(
+                                crate::storage::startup_diagnostics::StorageFailure::from_error(
+                                    &error,
+                                ),
+                            )
+                            .unwrap_or_default(),
+                        ),
+                    ]),
                 );
                 runtime_health.flush_operational_log().await;
                 return Err(error).context("open sqlite storage");

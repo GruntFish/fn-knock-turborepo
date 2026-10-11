@@ -81,16 +81,16 @@ impl TypedNotificationRepository {
                             |row| row.get::<_, bool>(0),
                         )?;
                         if !exists {
-                            return Err(storage_error(
+                            return Err(crate::storage::migration_error(
                                 "typed notification migration is recorded but its table is missing",
                             ));
                         }
                     }
                     Some((name, _)) if name != SCHEMA_NAME => {
-                        return Err(storage_error("typed notification migration name mismatch"));
+                        return Err(crate::storage::migration_error("typed notification migration name mismatch"));
                     }
                     Some(_) => {
-                        return Err(storage_error("typed notification migration checksum mismatch"));
+                        return Err(crate::storage::migration_error("typed notification migration checksum mismatch"));
                     }
                     None => {
                         tx.execute_batch(SCHEMA_SQL)?;
@@ -118,18 +118,18 @@ impl TypedNotificationRepository {
                             |row| row.get::<_, bool>(0),
                         )?;
                         if !exists {
-                            return Err(storage_error(
+                            return Err(crate::storage::migration_error(
                                 "typed notification history migration is recorded but its table is missing",
                             ));
                         }
                     }
                     Some((name, _)) if name != HISTORY_SCHEMA_NAME => {
-                        return Err(storage_error(
+                        return Err(crate::storage::migration_error(
                             "typed notification history migration name mismatch",
                         ));
                     }
                     Some(_) => {
-                        return Err(storage_error(
+                        return Err(crate::storage::migration_error(
                             "typed notification history migration checksum mismatch",
                         ));
                     }
@@ -154,10 +154,10 @@ impl TypedNotificationRepository {
                     Some((name, checksum))
                         if name == HISTORY_TRACE_SCHEMA_NAME && checksum == trace_checksum => {}
                     Some((name, _)) if name != HISTORY_TRACE_SCHEMA_NAME => {
-                        return Err(storage_error("typed notification trace migration name mismatch"));
+                        return Err(crate::storage::migration_error("typed notification trace migration name mismatch"));
                     }
                     Some(_) => {
-                        return Err(storage_error("typed notification trace migration checksum mismatch"));
+                        return Err(crate::storage::migration_error("typed notification trace migration checksum mismatch"));
                     }
                     None => {
                         tx.execute_batch(HISTORY_TRACE_SCHEMA_SQL)?;

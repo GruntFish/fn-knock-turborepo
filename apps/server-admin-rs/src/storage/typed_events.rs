@@ -75,16 +75,16 @@ impl TypedEventRepository {
                             |row| row.get::<_, bool>(0),
                         )?;
                         if !table_exists {
-                            return Err(storage_error(
+                            return Err(crate::storage::migration_error(
                                 "typed system-event migration is recorded but its table is missing",
                             ));
                         }
                     }
                     Some((name, _)) if name != TYPED_EVENT_SCHEMA_NAME => {
-                        return Err(storage_error("typed system-event migration name mismatch"));
+                        return Err(crate::storage::migration_error("typed system-event migration name mismatch"));
                     }
                     Some(_) => {
-                        return Err(storage_error("typed system-event migration checksum mismatch"));
+                        return Err(crate::storage::migration_error("typed system-event migration checksum mismatch"));
                     }
                     None => {
                         tx.execute_batch(TYPED_EVENT_SCHEMA_SQL)?;
@@ -112,10 +112,10 @@ impl TypedEventRepository {
                     Some((name, checksum))
                         if name == TYPED_EVENT_TRACE_SCHEMA_NAME && checksum == trace_checksum => {}
                     Some((name, _)) if name != TYPED_EVENT_TRACE_SCHEMA_NAME => {
-                        return Err(storage_error("typed system-event trace migration name mismatch"));
+                        return Err(crate::storage::migration_error("typed system-event trace migration name mismatch"));
                     }
                     Some(_) => {
-                        return Err(storage_error("typed system-event trace migration checksum mismatch"));
+                        return Err(crate::storage::migration_error("typed system-event trace migration checksum mismatch"));
                     }
                     None => {
                         tx.execute_batch(TYPED_EVENT_TRACE_SCHEMA_SQL)?;

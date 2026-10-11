@@ -16,7 +16,7 @@ pub(super) fn run_schema_migrations(
     if let Some(applied_version) =
         latest_applied_version.filter(|version| *version > latest_known_version)
     {
-        return Err(storage_error(format!(
+        return Err(crate::storage::migration_error(format!(
             "SQLite schema version {} is newer than this server supports ({latest_known_version})",
             applied_version
         )));
@@ -44,9 +44,9 @@ pub(super) fn run_schema_migration(
 
     if let Some((name, checksum)) = applied {
         if name != migration.name {
-            return Err(storage_error(format!(
-                "SQLite schema migration {} name mismatch: expected {}, found {}",
-                migration.version, migration.name, name
+            return Err(crate::storage::migration_error(format!(
+                "SQLite schema migration {} name mismatch: expected {}",
+                migration.version, migration.name
             )));
         }
         if checksum == expected_checksum {
@@ -59,7 +59,7 @@ pub(super) fn run_schema_migration(
             )?;
             return Ok(());
         }
-        return Err(storage_error(format!(
+        return Err(crate::storage::migration_error(format!(
             "SQLite schema migration {} checksum mismatch",
             migration.version
         )));

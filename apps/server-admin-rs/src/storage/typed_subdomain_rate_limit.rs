@@ -68,18 +68,18 @@ impl TypedSubdomainRateLimitRepository {
                             |row| row.get::<_, bool>(0),
                         )?;
                         if !exists {
-                            return Err(storage_error(
+                            return Err(crate::storage::migration_error(
                                 "typed subdomain rate-limit migration is recorded but its table is missing",
                             ));
                         }
                     }
                     Some((name, _)) if name != SCHEMA_NAME => {
-                        return Err(storage_error(
+                        return Err(crate::storage::migration_error(
                             "typed subdomain rate-limit migration name mismatch",
                         ));
                     }
                     Some(_) => {
-                        return Err(storage_error(
+                        return Err(crate::storage::migration_error(
                             "typed subdomain rate-limit migration checksum mismatch",
                         ));
                     }

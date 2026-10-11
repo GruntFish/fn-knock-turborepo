@@ -1,15 +1,17 @@
 use super::*;
+use crate::storage::StorageResultExt;
 
 impl ConnectionManager {
     pub(crate) async fn open(path: &Path) -> RedisResult<Self> {
         let readers = match std::env::var("FN_KNOCK_SQLITE_AUTH_READERS").as_deref() {
             Ok("2") => 2,
             Ok("4") => 4,
-            Ok("1" | "") | Err(_) => 1,
-            Ok(_) => {
-                return Err(storage_error(
+            Ok("1" | "") | Err(std::env::VarError::NotPresent) => 1,
+            Ok(_) | Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(crate::storage::invalid_configuration_error(
                     "FN_KNOCK_SQLITE_AUTH_READERS must be 1, 2, or 4",
-                ));
+                ))
+                .storage_stage("config.readers");
             }
         };
         Self::open_with_auth_readers(path, readers).await
@@ -17,39 +19,54 @@ impl ConnectionManager {
 
     pub(super) async fn open_with_auth_readers(path: &Path, readers: usize) -> RedisResult<Self> {
         if !matches!(readers, 1 | 2 | 4) {
-            return Err(storage_error("auth reader count must be 1, 2, or 4"));
+            return Err(crate::storage::invalid_configuration_error(
+                "auth reader count must be 1, 2, or 4",
+            ))
+            .storage_stage("config.readers");
         }
         if let Some(parent) = path.parent() {
-            let should_secure_parent = !tokio::fs::try_exists(parent).await?
+            let should_secure_parent = !tokio::fs::try_exists(parent)
+                .await
+                .storage_stage("directory.inspect")?
                 || parent.file_name() == Some(std::ffi::OsStr::new("storage"));
-            tokio::fs::create_dir_all(parent).await?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .storage_stage("directory.create")?;
             if should_secure_parent {
-                secure_directory_permissions(parent).await?;
+                secure_directory_permissions(parent)
+                    .await
+                    .storage_stage("directory.permissions")?;
             }
         }
-        let db = Connection::open(path).await?;
+        let db = Connection::open(path)
+            .await
+            .storage_stage("connection.primary")?;
         Self::initialize_primary(&db, path).await?;
         let analytics_db = Connection::open_with_flags(
             path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
-        .await?;
+        .await
+        .storage_stage("connection.analytics")?;
         let auth_read_db = Connection::open_with_flags(
             path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
-        .await?;
+        .await
+        .storage_stage("connection.auth")?;
         let health_db = Connection::open_with_flags(
             path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
-        .await?;
+        .await
+        .storage_stage("connection.health")?;
         let auth_read_pool = if readers == 1 {
             None
         } else {
             Some(Arc::new(
                 super::auth_read_pool::AuthReadPool::open(path, readers, auth_read_db.clone())
-                    .await?,
+                    .await
+                    .storage_stage("connection.auth_pool")?,
             ))
         };
         let manager = Self {
@@ -70,8 +87,13 @@ impl ConnectionManager {
             #[cfg(test)]
             path: path.to_path_buf(),
         };
-        manager.initialize_readers().await?;
-        secure_sqlite_file_permissions(path).await?;
+        manager
+            .initialize_readers()
+            .await
+            .storage_stage("connection.configure_readers")?;
+        secure_sqlite_file_permissions(path)
+            .await
+            .storage_stage("database.permissions")?;
         Ok(manager)
     }
 
@@ -83,11 +105,15 @@ impl ConnectionManager {
     async fn initialize_primary(db: &Connection, path: &Path) -> RedisResult<()> {
         let initialize_path = path.to_path_buf();
         db.call(move |conn| {
-            conn.pragma_update(None, "journal_mode", "WAL")?;
-            conn.pragma_update(None, "synchronous", "NORMAL")?;
-            conn.pragma_update(None, "foreign_keys", "ON")?;
-            conn.busy_timeout(std::time::Duration::from_secs(5))?;
-            run_schema_migrations(conn, &initialize_path)?;
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .storage_stage("connection.busy_timeout")?;
+            conn.pragma_update(None, "journal_mode", "WAL")
+                .storage_stage("connection.wal")?;
+            conn.pragma_update(None, "synchronous", "NORMAL")
+                .storage_stage("connection.synchronous")?;
+            conn.pragma_update(None, "foreign_keys", "ON")
+                .storage_stage("connection.foreign_keys")?;
+            run_schema_migrations(conn, &initialize_path).storage_stage("schema.base")?;
             Ok::<(), StorageError>(())
         })
         .await

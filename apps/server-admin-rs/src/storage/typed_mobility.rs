@@ -293,17 +293,17 @@ impl TypedMobilityRepository {
                                 |row| row.get::<_, bool>(0),
                             )?;
                             if !exists {
-                                return Err(storage_error(format!(
+                                return Err(crate::storage::migration_error(format!(
                                     "typed mobility migration is recorded but {table} is missing"
                                 )));
                             }
                         }
                     }
                     Some((name, _)) if name != SCHEMA_NAME => {
-                        return Err(storage_error("typed mobility migration name mismatch"));
+                        return Err(crate::storage::migration_error("typed mobility migration name mismatch"));
                     }
                     Some(_) => {
-                        return Err(storage_error("typed mobility migration checksum mismatch"));
+                        return Err(crate::storage::migration_error("typed mobility migration checksum mismatch"));
                     }
                     None => {
                         tx.execute_batch(SCHEMA_SQL)?;

@@ -77,16 +77,16 @@ impl TypedWhitelistRuntimeRepository {
                             |row| row.get::<_, i64>(0),
                         )?;
                         if count != 2 {
-                            return Err(storage_error(
+                            return Err(crate::storage::migration_error(
                                 "typed whitelist runtime migration is recorded but its tables are missing",
                             ));
                         }
                     }
                     Some((name, _)) if name != SCHEMA_NAME => {
-                        return Err(storage_error("typed whitelist runtime migration name mismatch"));
+                        return Err(crate::storage::migration_error("typed whitelist runtime migration name mismatch"));
                     }
                     Some(_) => {
-                        return Err(storage_error("typed whitelist runtime migration checksum mismatch"));
+                        return Err(crate::storage::migration_error("typed whitelist runtime migration checksum mismatch"));
                     }
                     None => {
                         tx.execute_batch(SCHEMA_SQL)?;

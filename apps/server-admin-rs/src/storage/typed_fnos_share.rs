@@ -73,16 +73,16 @@ impl TypedFnosShareRepository {
                             |row| row.get::<_, bool>(0),
                         )?;
                         if !exists {
-                            return Err(storage_error(
+                            return Err(crate::storage::migration_error(
                                 "typed fnOS share migration is recorded but its table is missing",
                             ));
                         }
                     }
                     Some((name, _)) if name != SCHEMA_NAME => {
-                        return Err(storage_error("typed fnOS share migration name mismatch"));
+                        return Err(crate::storage::migration_error("typed fnOS share migration name mismatch"));
                     }
                     Some(_) => {
-                        return Err(storage_error("typed fnOS share migration checksum mismatch"));
+                        return Err(crate::storage::migration_error("typed fnOS share migration checksum mismatch"));
                     }
                     None => {
                         tx.execute_batch(SCHEMA_SQL)?;

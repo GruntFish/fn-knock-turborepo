@@ -99,7 +99,7 @@ pub(crate) fn secure_windows_path(path: &Path, directory: bool) -> Result<(), St
     Ok(())
 }
 
-fn current_windows_sid(system_directory: &Path) -> Result<String, String> {
+pub(crate) fn current_windows_sid(system_directory: &Path) -> Result<String, String> {
     let output = std::process::Command::new(system_directory.join("whoami.exe"))
         .args(["/user", "/fo", "csv", "/nh"])
         .stdin(std::process::Stdio::null())

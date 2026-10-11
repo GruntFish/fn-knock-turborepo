@@ -144,7 +144,7 @@ impl TypedConfigRepository {
                     |row| row.get(0),
                 )?;
                 if let Some(version) = latest.filter(|version| *version > TYPED_SCHEMA_VERSION) {
-                    return Err(storage_error(format!(
+                    return Err(crate::storage::migration_error(format!(
                         "typed SQLite schema version {version} is newer than this server supports ({TYPED_SCHEMA_VERSION})"
                     )));
                 }
@@ -167,18 +167,18 @@ impl TypedConfigRepository {
                             |row| row.get::<_, bool>(0),
                         )?;
                         if !table_exists {
-                            return Err(storage_error(
+                            return Err(crate::storage::migration_error(
                                 "typed config migration is recorded but its table is missing",
                             ));
                         }
                     }
                     Some((name, _)) if name != TYPED_SCHEMA_NAME => {
-                        return Err(storage_error(format!(
+                        return Err(crate::storage::migration_error(format!(
                             "typed SQLite schema migration {TYPED_SCHEMA_VERSION} name mismatch"
                         )));
                     }
                     Some(_) => {
-                        return Err(storage_error(format!(
+                        return Err(crate::storage::migration_error(format!(
                             "typed SQLite schema migration {TYPED_SCHEMA_VERSION} checksum mismatch"
                         )));
                     }

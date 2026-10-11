@@ -1,4 +1,5 @@
 use super::*;
+use crate::storage::StorageResultExt;
 
 impl Store {
     pub(crate) fn diagnostics(&self) -> Arc<crate::runtime_health::operations::OperationRecorder> {
@@ -7,41 +8,94 @@ impl Store {
 
     pub async fn connect(sqlite_path: impl AsRef<Path>) -> crate::storage::StorageResult<Self> {
         let path = sqlite_path.as_ref().to_path_buf();
-        let manager = ConnectionManager::open(&path).await?;
+        let manager = ConnectionManager::open(&path)
+            .await
+            .storage_stage("storage.connect")?;
         let typed_config = TypedConfigRepository::new(manager.clone());
-        typed_config.initialize().await?;
+        typed_config
+            .initialize()
+            .await
+            .storage_stage("schema.typed_config")?;
         let typed_docker_admin = TypedDockerAdminRepository::new(manager.clone());
-        typed_docker_admin.initialize().await?;
+        typed_docker_admin
+            .initialize()
+            .await
+            .storage_stage("schema.typed_docker_admin")?;
         let typed_event_dedupe = TypedEventDedupeRepository::new(manager.clone());
-        typed_event_dedupe.initialize().await?;
+        typed_event_dedupe
+            .initialize()
+            .await
+            .storage_stage("schema.typed_event_dedupe")?;
         let typed_events = TypedEventRepository::new(manager.clone());
-        typed_events.initialize().await?;
+        typed_events
+            .initialize()
+            .await
+            .storage_stage("schema.typed_events")?;
         let typed_fnos_share = TypedFnosShareRepository::new(manager.clone());
-        typed_fnos_share.initialize().await?;
+        typed_fnos_share
+            .initialize()
+            .await
+            .storage_stage("schema.typed_fnos_share")?;
         let typed_hmac_nonce = TypedHmacNonceRepository::new(manager.clone());
-        typed_hmac_nonce.initialize().await?;
+        typed_hmac_nonce
+            .initialize()
+            .await
+            .storage_stage("schema.typed_hmac_nonce")?;
         let typed_identity_runtime = TypedIdentityRuntimeRepository::new(manager.clone());
-        typed_identity_runtime.initialize().await?;
+        typed_identity_runtime
+            .initialize()
+            .await
+            .storage_stage("schema.typed_identity_runtime")?;
         let typed_login_backoff = TypedLoginBackoffRepository::new(manager.clone());
-        typed_login_backoff.initialize().await?;
+        typed_login_backoff
+            .initialize()
+            .await
+            .storage_stage("schema.typed_login_backoff")?;
         let typed_mobility = TypedMobilityRepository::new(manager.clone());
-        typed_mobility.initialize().await?;
+        typed_mobility
+            .initialize()
+            .await
+            .storage_stage("schema.typed_mobility")?;
         let typed_notification_runtime = TypedNotificationRuntimeRepository::new(manager.clone());
-        typed_notification_runtime.initialize().await?;
+        typed_notification_runtime
+            .initialize()
+            .await
+            .storage_stage("schema.typed_notification_runtime")?;
         let typed_notifications = TypedNotificationRepository::new(manager.clone());
-        typed_notifications.initialize().await?;
+        typed_notifications
+            .initialize()
+            .await
+            .storage_stage("schema.typed_notifications")?;
         let typed_passkey_runtime = TypedPasskeyRuntimeRepository::new(manager.clone());
-        typed_passkey_runtime.initialize().await?;
+        typed_passkey_runtime
+            .initialize()
+            .await
+            .storage_stage("schema.typed_passkey_runtime")?;
         let typed_subdomain_grant = TypedSubdomainGrantRepository::new(manager.clone());
-        typed_subdomain_grant.initialize().await?;
+        typed_subdomain_grant
+            .initialize()
+            .await
+            .storage_stage("schema.typed_subdomain_grant")?;
         let typed_subdomain_rate_limit = TypedSubdomainRateLimitRepository::new(manager.clone());
-        typed_subdomain_rate_limit.initialize().await?;
+        typed_subdomain_rate_limit
+            .initialize()
+            .await
+            .storage_stage("schema.typed_subdomain_rate_limit")?;
         let typed_whitelist = TypedWhitelistRepository::new(manager.clone());
-        typed_whitelist.initialize().await?;
+        typed_whitelist
+            .initialize()
+            .await
+            .storage_stage("schema.typed_whitelist")?;
         let typed_whitelist_runtime = TypedWhitelistRuntimeRepository::new(manager.clone());
-        typed_whitelist_runtime.initialize().await?;
+        typed_whitelist_runtime
+            .initialize()
+            .await
+            .storage_stage("schema.typed_whitelist_runtime")?;
         let typed_wol_cooldown = TypedWolCooldownRepository::new(manager.clone());
-        typed_wol_cooldown.initialize().await?;
+        typed_wol_cooldown
+            .initialize()
+            .await
+            .storage_stage("schema.typed_wol_cooldown")?;
         let store = Self {
             manager,
             path,
@@ -86,56 +140,104 @@ impl Store {
             typed_whitelist_runtime_shadow: ShadowTracker::new("legacy_primary_shadow"),
             typed_wol_cooldown_shadow: ShadowTracker::new("legacy_primary_shadow"),
         };
-        store.typed.typed_docker_admin.rebuild_from_legacy().await?;
-        store.typed.typed_event_dedupe.rebuild_from_legacy().await?;
-        store.rebuild_typed_system_events_from_legacy().await?;
-        store.typed.typed_fnos_share.rebuild_from_legacy().await?;
-        store.typed.typed_hmac_nonce.rebuild_from_legacy().await?;
+        store
+            .typed
+            .typed_docker_admin
+            .rebuild_from_legacy()
+            .await
+            .storage_stage("rebuild.typed_docker_admin")?;
+        store
+            .typed
+            .typed_event_dedupe
+            .rebuild_from_legacy()
+            .await
+            .storage_stage("rebuild.typed_event_dedupe")?;
+        store
+            .rebuild_typed_system_events_from_legacy()
+            .await
+            .storage_stage("rebuild.rebuild_typed_system_events_from_legacy")?;
+        store
+            .typed
+            .typed_fnos_share
+            .rebuild_from_legacy()
+            .await
+            .storage_stage("rebuild.typed_fnos_share")?;
+        store
+            .typed
+            .typed_hmac_nonce
+            .rebuild_from_legacy()
+            .await
+            .storage_stage("rebuild.typed_hmac_nonce")?;
         store
             .typed
             .typed_identity_runtime
             .rebuild_from_legacy()
-            .await?;
+            .await
+            .storage_stage("rebuild.typed_identity_runtime")?;
         store
             .typed
             .typed_login_backoff
             .rebuild_from_legacy()
-            .await?;
-        store.typed.typed_mobility.rebuild_from_legacy().await?;
+            .await
+            .storage_stage("rebuild.typed_login_backoff")?;
+        store
+            .typed
+            .typed_mobility
+            .rebuild_from_legacy()
+            .await
+            .storage_stage("rebuild.typed_mobility")?;
         store
             .typed
             .typed_notification_runtime
             .rebuild_from_legacy()
-            .await?;
+            .await
+            .storage_stage("rebuild.typed_notification_runtime")?;
         store
             .rebuild_typed_notification_documents_from_legacy()
-            .await?;
+            .await
+            .storage_stage("rebuild.rebuild_typed_notification_documents_from_legacy")?;
         store
             .rebuild_typed_notification_history_from_legacy()
-            .await?;
+            .await
+            .storage_stage("rebuild.rebuild_typed_notification_history_from_legacy")?;
         store
             .typed
             .typed_passkey_runtime
             .rebuild_from_legacy()
-            .await?;
+            .await
+            .storage_stage("rebuild.typed_passkey_runtime")?;
         store
             .typed
             .typed_subdomain_grant
             .rebuild_from_legacy()
-            .await?;
+            .await
+            .storage_stage("rebuild.typed_subdomain_grant")?;
         store
             .typed
             .typed_subdomain_rate_limit
             .rebuild_from_legacy()
-            .await?;
-        store.rebuild_typed_whitelist_from_legacy().await?;
+            .await
+            .storage_stage("rebuild.typed_subdomain_rate_limit")?;
+        store
+            .rebuild_typed_whitelist_from_legacy()
+            .await
+            .storage_stage("rebuild.rebuild_typed_whitelist_from_legacy")?;
         store
             .typed
             .typed_whitelist_runtime
             .rebuild_from_legacy()
-            .await?;
-        store.typed.typed_wol_cooldown.rebuild_from_legacy().await?;
-        store.refresh_config_snapshot().await?;
+            .await
+            .storage_stage("rebuild.typed_whitelist_runtime")?;
+        store
+            .typed
+            .typed_wol_cooldown
+            .rebuild_from_legacy()
+            .await
+            .storage_stage("rebuild.typed_wol_cooldown")?;
+        store
+            .refresh_config_snapshot()
+            .await
+            .storage_stage("config.load")?;
         Ok(store)
     }
 

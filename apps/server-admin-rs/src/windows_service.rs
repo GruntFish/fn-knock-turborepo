@@ -68,6 +68,11 @@ use crate::{
     settings::Settings,
 };
 
+mod logging;
+mod storage_diagnostic;
+
+use crate::storage::startup_diagnostics::{StorageFailure, error_detail, sanitize_diagnostic};
+
 const SERVICE_NAME: &str = "FnKnock";
 const SERVICE_DISPLAY_NAME: &str = "fn-knock Gateway";
 const SERVICE_ACCOUNT: &str = r"NT SERVICE\FnKnock";
@@ -121,6 +126,7 @@ pub fn command_main() -> anyhow::Result<()> {
         Some("start") => start_service(),
         Some("stop") => stop_service(),
         Some("reset-panel-password") => reset_panel_password(),
+        Some("diagnose-storage") => storage_diagnostic::command(),
         Some("print-paths") => {
             let paths = WindowsPaths::discover()?;
             println!("program_data={}", paths.root.display());
@@ -149,6 +155,9 @@ fn print_command_help() {
     println!("  start                   Start the FnKnock SCM service");
     println!("  stop                    Stop the FnKnock SCM service");
     println!("  reset-panel-password    Clear panel password, sessions, and login backoff");
+    println!(
+        "  diagnose-storage [--database <path>] [--json]    Check an offline copy without changing the source"
+    );
     println!("  print-paths             Print ProgramData runtime paths");
     println!("  run | --service         Enter the SCM dispatcher (SCM use only)");
 }
@@ -165,8 +174,11 @@ fn reset_panel_password() -> anyhow::Result<()> {
 }
 
 fn service_main(_arguments: Vec<OsString>) {
+    logging::init();
     if let Err(error) = run_service() {
-        let _ = write_emergency_status(&format!("service bootstrap failed: {error:#}"));
+        let detail = format!("service bootstrap failed: {}", error_detail(&error));
+        logging::append(&detail);
+        let _ = write_emergency_status(&detail);
         // Returning normally from the generated service entrypoint can make a
         // bootstrap/runtime I/O failure look like a clean stop. Exit non-zero
         // so SCM applies the configured crash-recovery policy.
@@ -175,7 +187,6 @@ fn service_main(_arguments: Vec<OsString>) {
 }
 
 fn run_service() -> anyhow::Result<()> {
-    app::init_tracing();
     let shutdown = CancellationToken::new();
     let handler_shutdown = shutdown.clone();
     let event_handler = move |event| match event {
@@ -204,6 +215,12 @@ fn run_service() -> anyhow::Result<()> {
         .context("build FnKnock service runtime")?;
     let outcome = runtime.block_on(supervise(&status_handle, shutdown));
     drop(runtime);
+    let outcome = match outcome {
+        Err(error) if startup_error_is_deterministic(&error) => {
+            Ok(SupervisionOutcome::DeterministicFailure(error))
+        }
+        outcome => outcome,
+    };
 
     match outcome {
         Ok(SupervisionOutcome::Stopped) => {
@@ -218,8 +235,11 @@ fn run_service() -> anyhow::Result<()> {
             Ok(())
         }
         Ok(SupervisionOutcome::DeterministicFailure(error)) => {
-            tracing::error!(%error, "FnKnock service stopped after deterministic startup failure");
-            let _ = ensure_faulted_status(&error.to_string());
+            logging::append(&format!(
+                "deterministic startup failure: {}",
+                error_detail(&error)
+            ));
+            let _ = ensure_faulted_status(&error);
             report_status(
                 &status_handle,
                 ServiceState::Stopped,
@@ -231,7 +251,11 @@ fn run_service() -> anyhow::Result<()> {
             Ok(())
         }
         Ok(SupervisionOutcome::UnexpectedFailure(error)) | Err(error) => {
-            tracing::error!(%error, "FnKnock runtime group failed unexpectedly");
+            logging::append(&format!(
+                "unexpected runtime failure: {}",
+                error_detail(&error)
+            ));
+            let _ = ensure_faulted_status(&error);
             // Do not report SERVICE_STOPPED: SCM treats the process exit as a crash and
             // applies the configured 5/30/60 second recovery policy.
             std::process::exit(1);
@@ -252,7 +276,7 @@ async fn supervise(
             &ServiceStateFile::faulted(
                 None,
                 None,
-                &format!("invalid Windows service identity: {error}"),
+                &format!("invalid Windows service identity: {error:#}"),
             ),
         );
         return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -263,7 +287,11 @@ async fn supervise(
         Err(error) => {
             let _ = write_status(
                 &paths,
-                &ServiceStateFile::faulted(None, None, &format!("invalid runtime config: {error}")),
+                &ServiceStateFile::faulted(
+                    None,
+                    None,
+                    &format!("invalid runtime config: {}", error_detail(&error)),
+                ),
             );
             return Ok(SupervisionOutcome::DeterministicFailure(error));
         }
@@ -276,7 +304,7 @@ async fn supervise(
                 &ServiceStateFile::faulted(
                     Some(&runtime_config),
                     None,
-                    &format!("invalid internal RPC secret: {error}"),
+                    &format!("invalid internal RPC secret: {error:#}"),
                 ),
             );
             return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -290,7 +318,7 @@ async fn supervise(
                 &ServiceStateFile::faulted(
                     Some(&runtime_config),
                     None,
-                    &format!("invalid HMAC secret: {error}"),
+                    &format!("invalid HMAC secret: {error:#}"),
                 ),
             );
             return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -304,7 +332,7 @@ async fn supervise(
                 &ServiceStateFile::faulted(
                     Some(&runtime_config),
                     None,
-                    &format!("invalid ALTCHA HMAC secret: {error}"),
+                    &format!("invalid ALTCHA HMAC secret: {error:#}"),
                 ),
             );
             return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -316,7 +344,7 @@ async fn supervise(
             &ServiceStateFile::faulted(
                 Some(&runtime_config),
                 None,
-                &format!("bundle validation failed: {error}"),
+                &format!("bundle validation failed: {}", error_detail(&error)),
             ),
         );
         return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -327,7 +355,7 @@ async fn supervise(
             &ServiceStateFile::faulted(
                 Some(&runtime_config),
                 None,
-                &format!("port preflight failed: {error}"),
+                &format!("port preflight failed: {error:#}"),
             ),
         );
         return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -352,7 +380,7 @@ async fn supervise(
                 &ServiceStateFile::faulted(
                     Some(&runtime_config),
                     None,
-                    &format!("invalid internal gRPC configuration: {error}"),
+                    &format!("invalid internal gRPC configuration: {error:#}"),
                 ),
             );
             return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -382,7 +410,7 @@ async fn supervise(
             &ServiceStateFile::faulted(
                 Some(&runtime_config),
                 gateway_pid,
-                &format!("gateway supervision setup failed: {error}"),
+                &format!("gateway supervision setup failed: {error:#}"),
             ),
         )?;
         return Ok(SupervisionOutcome::UnexpectedFailure(error));
@@ -420,7 +448,7 @@ async fn supervise(
                 &ServiceStateFile::faulted(
                     Some(&runtime_config),
                     gateway_pid,
-                    &format!("gateway compatibility failed: {error}"),
+                    &format!("gateway compatibility failed: {error:#}"),
                 ),
             )?;
             return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -447,7 +475,7 @@ async fn supervise(
                 &ServiceStateFile::faulted(
                     Some(&runtime_config),
                     gateway_pid,
-                    &format!("gateway listener configuration failed: {error}"),
+                    &format!("gateway listener configuration failed: {error:#}"),
                 ),
             )?;
             return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -552,7 +580,7 @@ async fn supervise(
                 &ServiceStateFile::faulted(
                     Some(&runtime_config),
                     gateway_pid,
-                    &error.to_string(),
+                    &error_detail(&error),
                 ),
             );
             return Ok(SupervisionOutcome::UnexpectedFailure(error));
@@ -563,7 +591,7 @@ async fn supervise(
         app_shutdown.cancel();
         write_status(
             &paths,
-            &ServiceStateFile::faulted(Some(&runtime_config), gateway_pid, &error.to_string()),
+            &ServiceStateFile::faulted_error(Some(&runtime_config), gateway_pid, &error),
         )?;
         if startup_error_is_deterministic(&error) {
             return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -613,7 +641,7 @@ async fn supervise(
                 &ServiceStateFile::faulted(
                     Some(&runtime_config),
                     gateway_pid,
-                    &format!("gateway listener readiness failed: {error}"),
+                    &format!("gateway listener readiness failed: {error:#}"),
                 ),
             )?;
             return Ok(SupervisionOutcome::DeterministicFailure(error));
@@ -755,7 +783,7 @@ async fn wait_for_gateway_control_plane(
     loop {
         let gateway_status = gateway.try_wait().map_err(|error| {
             GatewayStartupFailure::Unexpected(anyhow!(
-                "query Go gateway status during startup: {error}"
+                "query Go gateway status during startup: {error:#}"
             ))
         })?;
         if let Some(status) = gateway_status {
@@ -805,7 +833,7 @@ async fn set_gateway_listener_scope(
         .await
         .map_err(|error| {
             GatewayStartupFailure::Unexpected(anyhow!(
-                "apply persisted gateway listener scope: {error}"
+                "apply persisted gateway listener scope: {error:#}"
             ))
         })?;
     if applied_scope != config.listener_scope {
@@ -834,7 +862,7 @@ async fn wait_for_gateway_listener_scope(
     loop {
         let gateway_status = gateway.try_wait().map_err(|error| {
             GatewayStartupFailure::Unexpected(anyhow!(
-                "query Go gateway status during listener rebind: {error}"
+                "query Go gateway status during listener rebind: {error:#}"
             ))
         })?;
         if let Some(status) = gateway_status {
@@ -1055,7 +1083,7 @@ fn cleanup_supervisor_hints(directory: &Path) {
 
 fn gateway_failure_message(prefix: &str, error: &anyhow::Error, paths: &WindowsPaths) -> String {
     format!(
-        "{prefix}: {error}; gateway diagnostics: {}",
+        "{prefix}: {error:#}; gateway diagnostics: {}",
         gateway_console_log_path(paths).display()
     )
 }
@@ -1075,6 +1103,13 @@ enum GatewayStartupFailure {
 }
 
 fn startup_error_is_deterministic(error: &anyhow::Error) -> bool {
+    if let Some(storage) = error.downcast_ref::<crate::storage::StorageError>() {
+        return !StorageFailure::from_error(storage).retryable;
+    }
+    if let Some(io) = error.downcast_ref::<std::io::Error>() {
+        return io.kind() == std::io::ErrorKind::PermissionDenied
+            && !matches!(io.raw_os_error(), Some(32 | 33));
+    }
     matches!(
         error.downcast_ref::<BundleCompatibilityError>(),
         Some(BundleCompatibilityError::Incompatible(_))
@@ -1162,10 +1197,13 @@ struct WindowsPaths {
 impl WindowsPaths {
     fn discover() -> anyhow::Result<Self> {
         let program_data = trusted_program_data_directory()?;
-        let root = program_data.join("FnKnock");
+        Ok(Self::from_root(program_data.join("FnKnock")))
+    }
+
+    fn from_root(root: PathBuf) -> Self {
         let config = root.join("config");
         let state = root.join("state");
-        Ok(Self {
+        Self {
             runtime_config: config.join("runtime.json"),
             status: state.join("status.json"),
             gateway: root.join("gateway"),
@@ -1178,7 +1216,7 @@ impl WindowsPaths {
             root,
             config,
             state,
-        })
+        }
     }
 
     fn create_runtime_directories(&self) -> anyhow::Result<()> {
@@ -1550,6 +1588,15 @@ struct ServiceStateFile {
     ports: Option<ServicePorts>,
     listener_scope: Option<String>,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    startup_stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retryable: Option<bool>,
+    diagnostic_log: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1583,7 +1630,35 @@ impl ServiceStateFile {
         gateway_pid: Option<u32>,
         message: &str,
     ) -> Self {
+        logging::append(message);
         Self::new("faulted", config, gateway_pid, message)
+    }
+
+    fn faulted_error(
+        config: Option<&WindowsRuntimeConfig>,
+        gateway_pid: Option<u32>,
+        error: &anyhow::Error,
+    ) -> Self {
+        let detail = error_detail(error);
+        logging::append(&format!("startup failed: {detail}"));
+        let mut state = Self::faulted(config, gateway_pid, &detail);
+        if let Some(storage) = error.downcast_ref::<crate::storage::StorageError>() {
+            let failure = StorageFailure::from_error(storage);
+            state.startup_stage = failure.stage.map(str::to_owned);
+            state.error_code = Some(failure.code);
+            state.retryable = Some(failure.retryable);
+        } else if let Some(io) = error.downcast_ref::<std::io::Error>() {
+            state.startup_stage = Some("service.bootstrap".into());
+            state.error_code = Some(format!(
+                "io:{:?}:{}",
+                io.kind(),
+                io.raw_os_error()
+                    .map(|code| code.to_string())
+                    .unwrap_or_default()
+            ));
+            state.retryable = Some(!startup_error_is_deterministic(error));
+        }
+        state
     }
 
     fn new(
@@ -1612,12 +1687,17 @@ impl ServiceStateFile {
             }),
             listener_scope: config.map(|config| config.listener_scope.clone()),
             message: sanitize_status_message(message),
+            startup_stage: None,
+            error_code: None,
+            retryable: None,
+            diagnostic_log: "logs/service.log",
+            log_error: logging::error(),
         }
     }
 }
 
 fn sanitize_status_message(message: &str) -> String {
-    message
+    sanitize_diagnostic(message)
         .chars()
         .filter(|character| !character.is_control() || *character == ' ')
         .take(512)
@@ -1625,16 +1705,23 @@ fn sanitize_status_message(message: &str) -> String {
 }
 
 fn write_status(paths: &WindowsPaths, state: &ServiceStateFile) -> anyhow::Result<()> {
+    if state.state == "faulted" {
+        logging::append(&state.message);
+    }
     atomic_write_json(&paths.status, state)
 }
 
 fn write_emergency_status(message: &str) -> anyhow::Result<()> {
     let paths = WindowsPaths::discover()?;
-    paths.create_runtime_directories()?;
-    write_status(&paths, &ServiceStateFile::faulted(None, None, message))
+    write_emergency_status_at(&paths, message)
 }
 
-fn ensure_faulted_status(message: &str) -> anyhow::Result<()> {
+fn write_emergency_status_at(paths: &WindowsPaths, message: &str) -> anyhow::Result<()> {
+    // atomic_write creates only state's parent; do not revisit the failing data directory.
+    write_status(paths, &ServiceStateFile::faulted(None, None, message))
+}
+
+fn ensure_faulted_status(error: &anyhow::Error) -> anyhow::Result<()> {
     let paths = WindowsPaths::discover()?;
     let current_process_fault = fs::read(&paths.status)
         .ok()
@@ -1649,7 +1736,7 @@ fn ensure_faulted_status(message: &str) -> anyhow::Result<()> {
     if current_process_fault {
         Ok(())
     } else {
-        write_emergency_status(message)
+        write_status(&paths, &ServiceStateFile::faulted_error(None, None, error))
     }
 }
 
@@ -1786,6 +1873,20 @@ fn report_status(
         .context("report FnKnock service status")
 }
 
+fn scm_recovery_actions() -> Vec<ServiceAction> {
+    SCM_RESTART_DELAYS_SECONDS
+        .into_iter()
+        .map(|seconds| ServiceAction {
+            action_type: ServiceActionType::Restart,
+            delay: Duration::from_secs(seconds),
+        })
+        .chain(std::iter::once(ServiceAction {
+            action_type: ServiceActionType::None,
+            delay: Duration::ZERO,
+        }))
+        .collect()
+}
+
 fn install_service() -> anyhow::Result<()> {
     let executable = env::current_exe().context("resolve fn-knock-service executable")?;
     let manager = ServiceManager::local_computer(
@@ -1822,15 +1923,7 @@ fn install_service() -> anyhow::Result<()> {
         reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(24 * 60 * 60)),
         reboot_msg: Some(OsString::new()),
         command: Some(OsString::new()),
-        actions: Some(
-            SCM_RESTART_DELAYS_SECONDS
-                .into_iter()
-                .map(|seconds| ServiceAction {
-                    action_type: ServiceActionType::Restart,
-                    delay: Duration::from_secs(seconds),
-                })
-                .collect(),
-        ),
+        actions: Some(scm_recovery_actions()),
     })?;
     // Configuration/port errors are reported as a clean SERVICE_STOPPED state
     // and must not enter a recovery loop. Only an unreported process crash
@@ -1988,12 +2081,59 @@ fn run_system_checked(program: &str, args: &[&str]) -> anyhow::Result<()> {
 fn display_exit_status(result: std::io::Result<std::process::ExitStatus>) -> String {
     result
         .map(|status| status.to_string())
-        .unwrap_or_else(|error| format!("status unavailable: {error}"))
+        .unwrap_or_else(|error| format!("status unavailable: {error:#}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn early_permission_errors_stop_but_sharing_errors_can_retry() {
+        for (code, deterministic) in [(5, true), (32, false), (33, false)] {
+            let error = anyhow::Error::new(std::io::Error::from_raw_os_error(code))
+                .context("create runtime directory");
+            assert_eq!(startup_error_is_deterministic(&error), deterministic);
+            let state = ServiceStateFile::faulted_error(None, None, &error);
+            assert_eq!(state.retryable, Some(!deterministic));
+            assert!(state.error_code.unwrap().ends_with(&format!(":{code}")));
+        }
+    }
+
+    #[test]
+    fn emergency_status_does_not_revisit_broken_business_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = WindowsPaths::from_root(directory.path().to_owned());
+        fs::write(&paths.config, "directory obstructed by a file").unwrap();
+        assert!(paths.create_runtime_directories().is_err());
+        write_emergency_status_at(&paths, "runtime directory failure").unwrap();
+        let status: serde_json::Value =
+            serde_json::from_slice(&fs::read(&paths.status).unwrap()).unwrap();
+        assert_eq!(status["state"], "faulted");
+        assert_eq!(status["message"], "runtime directory failure");
+    }
+
+    #[test]
+    fn recovery_actions_end_and_storage_errors_keep_diagnostics() {
+        let actions = scm_recovery_actions();
+        assert_eq!(actions.len(), 4);
+        assert_eq!(actions[3].action_type, ServiceActionType::None);
+        assert_eq!(
+            actions[..3]
+                .iter()
+                .map(|action| action.delay.as_secs())
+                .collect::<Vec<_>>(),
+            vec![5, 30, 60]
+        );
+        let error = anyhow::Error::new(crate::storage::migration_error("schema mismatch"))
+            .context("open sqlite storage");
+        assert!(startup_error_is_deterministic(&error));
+        let status = ServiceStateFile::faulted_error(None, None, &error);
+        assert_eq!(status.error_code.as_deref(), Some("migration_incompatible"));
+        assert_eq!(status.retryable, Some(false));
+        assert!(status.message.contains("schema mismatch"));
+        assert_eq!(status.schema_version, 1);
+    }
 
     #[test]
     fn ordinary_users_are_granted_only_status_tree_access() {

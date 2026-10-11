@@ -1,5 +1,8 @@
+#[cfg(any(windows, test))]
+pub(crate) mod offline_diagnostic;
 pub(crate) mod redis_compat;
 pub(crate) mod redis_store;
+pub(crate) mod startup_diagnostics;
 pub(crate) mod typed_config;
 pub(crate) mod typed_docker_admin;
 pub(crate) mod typed_event_dedupe;
@@ -24,6 +27,16 @@ pub(crate) type StorageResult<T> = Result<T, StorageError>;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum StorageError {
+    #[error("{stage}: {source}")]
+    Initialization {
+        stage: &'static str,
+        #[source]
+        source: Box<StorageError>,
+    },
+    #[error("{0}")]
+    Migration(String),
+    #[error("{0}")]
+    InvalidConfiguration(String),
     #[error("sqlite error: {0}")]
     Sqlite(#[from] tokio_rusqlite::rusqlite::Error),
     #[error("sqlite worker is closed")]
@@ -36,6 +49,27 @@ pub(crate) enum StorageError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Message(String),
+}
+
+pub(crate) trait StorageResultExt<T> {
+    fn storage_stage(self, stage: &'static str) -> StorageResult<T>;
+}
+
+impl<T, E: Into<StorageError>> StorageResultExt<T> for Result<T, E> {
+    fn storage_stage(self, stage: &'static str) -> StorageResult<T> {
+        self.map_err(|error| StorageError::Initialization {
+            stage,
+            source: Box::new(error.into()),
+        })
+    }
+}
+
+pub(crate) fn migration_error(message: impl Into<String>) -> StorageError {
+    StorageError::Migration(message.into())
+}
+
+pub(crate) fn invalid_configuration_error(message: impl Into<String>) -> StorageError {
+    StorageError::InvalidConfiguration(message.into())
 }
 
 impl From<tokio_rusqlite::Error<StorageError>> for StorageError {
