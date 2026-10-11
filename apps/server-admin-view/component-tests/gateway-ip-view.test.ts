@@ -33,7 +33,6 @@ import { useConfigStore } from "../src/store/config";
 import { useGatewayRequestLogsResource } from "../src/views/gateway-request-logs/useGatewayRequestLogsResource";
 import { useGatewayLogIpPresentation } from "../src/views/gateway-request-logs/useGatewayLogIpPresentation";
 import GatewayLogIpGroupsView from "../src/views/gateway-request-logs/GatewayLogIpGroups.vue";
-import { formatLogClock } from "../src/views/gateway-request-logs/ip-view-model";
 
 const groupData = (page = 1): GatewayLogIpGroups => ({
   date: "2026-09-21",
@@ -289,7 +288,7 @@ describe("gateway IP view", () => {
     wrapper.unmount();
   });
 
-  it("renders IP links and exact recorded times on desktop and mobile", async () => {
+  it("opens an IP from the group overview", async () => {
     const wrapper = mount(GatewayLogIpGroupsView, {
       props: {
         data: groupData(),
@@ -299,14 +298,11 @@ describe("gateway IP view", () => {
       },
       global: { plugins: [i18n()] },
     });
-    expect(wrapper.text()).toContain("14:32:08");
     const button = wrapper
       .findAll("button")
       .find((node) => node.text() === "36.142.108.111");
     await button?.trigger("click");
     expect(wrapper.emitted("open")?.[0]).toEqual(["36.142.108.111"]);
-    expect(formatLogClock("2026-09-21T00:00:01+08:00")).toBe("00:00:01");
-    expect(formatLogClock("")).toBe("—");
     wrapper.unmount();
   });
 });

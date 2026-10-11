@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { GatewayLogIpGroups } from "@/lib/api/gateway";
-import { formatLogClock } from "./ip-view-model";
+import HumanFriendlyTime from "@admin-shared/components/common/HumanFriendlyTime.vue";
 
 defineProps<{
   data: GatewayLogIpGroups | null;
@@ -173,13 +173,13 @@ const sorts = [
               <td
                 class="space-y-1 whitespace-nowrap px-3 py-3 text-xs text-muted-foreground"
               >
-                <p :title="item.first_seen">
+                <p>
                   {{ t("admin.gatewayRequestLogs.ipView.first") }}
-                  {{ formatLogClock(item.first_seen) }}
+                  <HumanFriendlyTime :value="item.first_seen" />
                 </p>
-                <p :title="item.last_seen">
+                <p>
                   {{ t("admin.gatewayRequestLogs.ipView.last") }}
-                  {{ formatLogClock(item.last_seen) }}
+                  <HumanFriendlyTime :value="item.last_seen" />
                 </p>
               </td>
               <td class="px-4 py-3 text-right">
@@ -244,15 +244,15 @@ const sorts = [
               {{ item.waf_hits }}</span
             >
           </div>
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="text-xs text-muted-foreground">
-              <p :title="item.first_seen">
+              <p>
                 {{ t("admin.gatewayRequestLogs.ipView.first") }}
-                {{ formatLogClock(item.first_seen) }}
+                <HumanFriendlyTime :value="item.first_seen" />
               </p>
-              <p :title="item.last_seen">
+              <p>
                 {{ t("admin.gatewayRequestLogs.ipView.last") }}
-                {{ formatLogClock(item.last_seen) }}
+                <HumanFriendlyTime :value="item.last_seen" />
               </p>
             </div>
             <Button

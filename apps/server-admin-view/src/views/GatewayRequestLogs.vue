@@ -229,7 +229,6 @@ const activeEntryWithIpLocation = computed(() =>
       />
       <GatewayRequestLogsTable
         v-else
-        :absolute-time="Boolean(clientIp)"
         v-model:is-all-displayed-rows-selected="isAllDisplayedRowsSelected"
         :block-ips-from-logs="blockIpsFromLogs"
         :entries="displayedEntries"
