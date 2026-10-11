@@ -113,10 +113,14 @@ function Assert-AuthCaptchaRuntime {
     [Globalization.CultureInfo]::InvariantCulture
   )
   $nonce = [guid]::NewGuid().ToString("N")
-  $signature = Get-HmacSha256Hex -Secret $hmacSecret -Message "${timestamp}:${nonce}"
+  $bootstrapPath = "/api/auth/bootstrap"
+  # Match the request-bound fn-knock-v1 canonical message; GET has an empty body.
+  $emptyBodySha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  $canonicalMessage = @("fn-knock-v1", "GET", $bootstrapPath, $emptyBodySha256, $timestamp, $nonce) -join "`n"
+  $signature = Get-HmacSha256Hex -Secret $hmacSecret -Message $canonicalMessage
   $bootstrap = Invoke-RestMethod `
     -Method Get `
-    -Uri "http://127.0.0.1:$AuthPort/api/auth/bootstrap" `
+    -Uri "http://127.0.0.1:${AuthPort}${bootstrapPath}" `
     -Headers @{
       "x-timestamp" = $timestamp
       "x-nonce" = $nonce
