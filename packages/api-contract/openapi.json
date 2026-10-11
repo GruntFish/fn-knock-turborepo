@@ -13265,6 +13265,13 @@
             ],
             "type": "string"
           },
+          "disabled_host_behavior": {
+            "enum": [
+              "error_page",
+              "reset_connection"
+            ],
+            "type": "string"
+          },
           "upstream_error_detail": {
             "enum": [
               "less",
@@ -13276,13 +13283,24 @@
         },
         "required": [
           "behavior",
-          "upstream_error_detail"
+          "upstream_error_detail",
+          "disabled_host_behavior"
         ],
         "type": "object"
       },
       "GatewayUnmatchedRouteUpdateData": {
         "properties": {
           "behavior": {
+            "enum": [
+              "error_page",
+              "reset_connection"
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "disabled_host_behavior": {
             "enum": [
               "error_page",
               "reset_connection"

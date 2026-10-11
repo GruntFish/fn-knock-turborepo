@@ -71,6 +71,11 @@ pub(super) fn normalize_gateway_unmatched_route(value: &Value) -> Value {
         } else {
             "error_page"
         },
+        "disabled_host_behavior": if value.get("disabled_host_behavior").and_then(Value::as_str) == Some("reset_connection") {
+            "reset_connection"
+        } else {
+            "error_page"
+        },
         "upstream_error_detail": match value.get("upstream_error_detail").and_then(Value::as_str) {
             Some("more") => "more",
             Some("reset_connection") => "reset_connection",
@@ -224,6 +229,7 @@ pub(super) fn default_gateway_unmatched_route() -> Value {
     json!({
         "behavior": "error_page",
         "upstream_error_detail": "less",
+        "disabled_host_behavior": "error_page",
     })
 }
 

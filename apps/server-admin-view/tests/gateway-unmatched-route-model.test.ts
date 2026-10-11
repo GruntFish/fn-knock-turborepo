@@ -28,6 +28,7 @@ test("gateway unmatched-route selection builds the unified-save patch", () => {
       unmatched_route: {
         behavior: "reset_connection",
         upstream_error_detail: "more",
+        disabled_host_behavior: "error_page",
       },
     },
   );
@@ -78,7 +79,7 @@ test("gateway settings keeps unmatched-route selection inline and in unified sav
   );
   assert.match(
     controllerSource,
-    /\.\.\.buildGatewayUnmatchedRoutePatch\(\s*form\.unmatched_route\.behavior,\s*form\.unmatched_route\.upstream_error_detail,\s*\)/u,
+    /\.\.\.buildGatewayUnmatchedRoutePatch\(\s*form\.unmatched_route\.behavior,\s*form\.unmatched_route\.upstream_error_detail,\s*form\.unmatched_route\.disabled_host_behavior,\s*\)/u,
   );
   assert.doesNotMatch(routerSource, /gateway-unmatched-route/u);
 });
@@ -105,4 +106,17 @@ test("only the default-domain indicator receives the unavailable visual state", 
   assert.ok(defaultDomainBlock);
   assert.match(defaultDomainBlock, /isDefaultDomainAvailable/u);
   assert.match(defaultDomainBlock, /text-amber/u);
+});
+
+test("disabled-host behavior stays independent of unmatched routes", () => {
+  assert.deepEqual(
+    buildGatewayUnmatchedRoutePatch("error_page", "less", "reset_connection"),
+    {
+      unmatched_route: {
+        behavior: "error_page",
+        upstream_error_detail: "less",
+        disabled_host_behavior: "reset_connection",
+      },
+    },
+  );
 });

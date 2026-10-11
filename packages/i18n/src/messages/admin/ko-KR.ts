@@ -884,6 +884,10 @@ export const koKRAdmin = {
     portalVersionV1: "v1 · 클래식",
     portalVersionV2: "v2 · Launchpad",
     editPortal: "포털 편집",
+    disabledHostBehavior: "도메인 비활성화 시 동작",
+    disabledHostBehaviorDescription:
+      "수동으로 비활성화한 하위 도메인에만 적용됩니다. 차단 페이지 표시는 서비스 이용 불가 안내를 반환합니다. 연결 차단은 페이지를 반환하지 않으며 HTTP/1 연결을 닫고 HTTP/2 및 HTTP/3의 현재 요청 스트림을 중단합니다. 허용 시간 외에는 기존 안내가 표시됩니다.",
+    disabledHostErrorPage: "차단 페이지 표시",
     unmatchedRoute: "일치하는 경로가 없을 때 동작",
     unmatchedRouteDescription:
       "안내·선택·오류 페이지를 표시하거나, 페이지를 반환하지 않고 HTTP/1 TCP 연결을 재설정하며 HTTP/2에서는 현재 스트림만 중단합니다.",

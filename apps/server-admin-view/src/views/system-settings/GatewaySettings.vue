@@ -188,6 +188,17 @@ const {
         :disabled="isGatewaySettingsBusy"
       />
 
+      <GatewayUnmatchedRouteSettingRow
+        v-model="form.unmatched_route.disabled_host_behavior"
+        :title="t('admin.gatewaySettings.disabledHostBehavior')"
+        :description="
+          t('admin.gatewaySettings.disabledHostBehaviorDescription')
+        "
+        :error-page-label="t('admin.gatewaySettings.disabledHostErrorPage')"
+        :reset-connection-label="t('admin.gatewaySettings.unmatchedRouteReset')"
+        :disabled="isGatewaySettingsBusy"
+      />
+
       <GatewayUpstreamErrorSettingRow
         v-model="form.unmatched_route.upstream_error_detail"
         :disabled="isGatewaySettingsBusy"

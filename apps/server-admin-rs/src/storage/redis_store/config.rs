@@ -110,7 +110,8 @@ pub fn default_config() -> Value {
     let wol_feature = json!({ "enabled": false });
     let gateway_unmatched_route = json!({
         "behavior": "error_page",
-        "upstream_error_detail": "less"
+        "upstream_error_detail": "less",
+        "disabled_host_behavior": "error_page"
     });
     let appearance = json!({ "theme_color_preset": "default" });
     let dashboard_display = json!({

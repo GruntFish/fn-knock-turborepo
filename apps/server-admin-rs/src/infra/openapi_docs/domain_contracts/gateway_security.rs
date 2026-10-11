@@ -60,12 +60,14 @@ pub(super) struct GatewayPortalUpdateData {
 pub(super) struct GatewayUnmatchedRouteData {
     behavior: String,
     upstream_error_detail: String,
+    disabled_host_behavior: String,
 }
 
 #[derive(Serialize, ToSchema)]
 pub(super) struct GatewayUnmatchedRouteUpdateData {
     behavior: Option<String>,
     upstream_error_detail: Option<String>,
+    disabled_host_behavior: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]

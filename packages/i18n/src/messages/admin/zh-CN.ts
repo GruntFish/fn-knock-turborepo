@@ -809,6 +809,10 @@ export const zhCNAdmin = {
     portalVersionV1: "v1 · 经典",
     portalVersionV2: "v2 · 启动台",
     editPortal: "编辑传送门",
+    disabledHostBehavior: "禁用域名后行为",
+    disabledHostBehaviorDescription:
+      "仅影响手动禁用的子域名。显示阻止页面会返回服务不可用提示；阻断连接不返回页面，HTTP/1 关闭连接，HTTP/2、HTTP/3 中止当前请求流。非允许访问时段仍显示原有提示。",
+    disabledHostErrorPage: "显示阻止页面",
     unmatchedRoute: "无匹配路由时行为",
     unmatchedRouteDescription:
       "展示错误页面会返回友好的欢迎页、选择页或错误页；阻断连接不返回页面，HTTP/1 重置 TCP 连接，HTTP/2 仅中止当前请求流。",

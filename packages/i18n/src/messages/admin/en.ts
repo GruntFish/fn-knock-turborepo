@@ -894,6 +894,10 @@ export const enAdmin = {
     portalVersionV1: "v1 · Classic",
     portalVersionV2: "v2 · Launchpad",
     editPortal: "Edit portal",
+    disabledHostBehavior: "Disabled domain behavior",
+    disabledHostBehaviorDescription:
+      "Applies only to manually disabled subdomains. Show block page returns a service unavailable message. Block connection returns no page: HTTP/1 closes the connection; HTTP/2 and HTTP/3 abort the current request stream. Outside allowed hours, the existing message is still shown.",
+    disabledHostErrorPage: "Show block page",
     unmatchedRoute: "No-match route behavior",
     unmatchedRouteDescription:
       "Show a friendly welcome, selection, or error page; or return no page, resetting HTTP/1 TCP connections and aborting only the current HTTP/2 stream.",

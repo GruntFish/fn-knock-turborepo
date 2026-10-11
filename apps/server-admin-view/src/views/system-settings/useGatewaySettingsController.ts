@@ -41,6 +41,7 @@ export const useGatewaySettingsController = () => {
     unmatched_route: {
       behavior: "error_page",
       upstream_error_detail: "less",
+      disabled_host_behavior: "error_page",
     },
     crawler_blocker: {
       enabled: false,
@@ -95,6 +96,8 @@ export const useGatewaySettingsController = () => {
       settings.value.crawler_blocker.enabled !== form.crawler_blocker.enabled ||
       settings.value.unmatched_route.behavior !==
         form.unmatched_route.behavior ||
+      settings.value.unmatched_route.disabled_host_behavior !==
+        form.unmatched_route.disabled_host_behavior ||
       settings.value.unmatched_route.upstream_error_detail !==
         form.unmatched_route.upstream_error_detail
     );
@@ -173,6 +176,9 @@ export const useGatewaySettingsController = () => {
       behavior: normalizeGatewayUnmatchedRouteBehavior(
         data.unmatched_route?.behavior,
       ),
+      disabled_host_behavior: normalizeGatewayUnmatchedRouteBehavior(
+        data.unmatched_route?.disabled_host_behavior,
+      ),
       upstream_error_detail: normalizeGatewayUpstreamErrorDetail(
         data.unmatched_route?.upstream_error_detail,
       ),
@@ -194,6 +200,8 @@ export const useGatewaySettingsController = () => {
     form.portal.navigation_mode = snapshot.portal.navigation_mode;
     form.portal.smart_lan_detection = snapshot.portal.smart_lan_detection;
     form.unmatched_route.behavior = snapshot.unmatched_route.behavior;
+    form.unmatched_route.disabled_host_behavior =
+      snapshot.unmatched_route.disabled_host_behavior;
     form.unmatched_route.upstream_error_detail =
       snapshot.unmatched_route.upstream_error_detail;
     form.crawler_blocker.enabled = snapshot.crawler_blocker.enabled;
@@ -243,6 +251,7 @@ export const useGatewaySettingsController = () => {
           ...buildGatewayUnmatchedRoutePatch(
             form.unmatched_route.behavior,
             form.unmatched_route.upstream_error_detail,
+            form.unmatched_route.disabled_host_behavior,
           ),
         }),
       {

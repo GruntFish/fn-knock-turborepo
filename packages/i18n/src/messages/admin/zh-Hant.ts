@@ -745,6 +745,10 @@ export const zhHantAdmin = {
     portalVersionV1: "v1 · 經典",
     portalVersionV2: "v2 · 啟動台",
     editPortal: "編輯傳送門",
+    disabledHostBehavior: "停用網域後行為",
+    disabledHostBehaviorDescription:
+      "僅影響手動停用的子網域。顯示阻擋頁面會傳回服務無法使用提示；中斷連線不傳回頁面，HTTP/1 關閉連線，HTTP/2、HTTP/3 中止目前的請求串流。非允許存取時段仍顯示原有提示。",
+    disabledHostErrorPage: "顯示阻擋頁面",
     unmatchedRoute: "無匹配路由時行為",
     unmatchedRouteDescription:
       "顯示錯誤頁面會返回友善的歡迎頁、選擇頁或錯誤頁；阻斷連接不返回頁面，HTTP/1 重置 TCP 連接，HTTP/2 僅中止目前請求流。",

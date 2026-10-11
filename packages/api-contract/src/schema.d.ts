@@ -10865,11 +10865,15 @@ export interface components {
             /** @enum {string} */
             behavior: "error_page" | "reset_connection";
             /** @enum {string} */
+            disabled_host_behavior: "error_page" | "reset_connection";
+            /** @enum {string} */
             upstream_error_detail: "less" | "more" | "reset_connection";
         };
         GatewayUnmatchedRouteUpdateData: {
             /** @enum {string|null} */
             behavior?: "error_page" | "reset_connection" | null;
+            /** @enum {string|null} */
+            disabled_host_behavior?: "error_page" | "reset_connection" | null;
             /** @enum {string|null} */
             upstream_error_detail?: "less" | "more" | "reset_connection" | null;
         };

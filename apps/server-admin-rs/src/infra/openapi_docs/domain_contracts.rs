@@ -1645,6 +1645,12 @@ pub(super) fn components() -> Map<String, Value> {
             "upstream_error_detail",
             &["less", "more", "reset_connection"],
         );
+        set_property_enum(
+            &mut schemas,
+            schema,
+            "disabled_host_behavior",
+            &["error_page", "reset_connection"],
+        );
     }
     set_property_enum(
         &mut schemas,

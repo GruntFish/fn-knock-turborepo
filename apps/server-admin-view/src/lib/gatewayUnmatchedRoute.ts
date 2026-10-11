@@ -21,9 +21,12 @@ export const normalizeGatewayUpstreamErrorDetail = (
 export const buildGatewayUnmatchedRoutePatch = (
   behavior: GatewayUnmatchedRouteBehavior,
   upstreamErrorDetail: GatewayUpstreamErrorDetail = "less",
+  disabledHostBehavior: GatewayUnmatchedRouteBehavior = "error_page",
 ): { unmatched_route: GatewayUnmatchedRouteConfig } => ({
   unmatched_route: {
     behavior: normalizeGatewayUnmatchedRouteBehavior(behavior),
+    disabled_host_behavior:
+      normalizeGatewayUnmatchedRouteBehavior(disabledHostBehavior),
     upstream_error_detail:
       normalizeGatewayUpstreamErrorDetail(upstreamErrorDetail),
   },

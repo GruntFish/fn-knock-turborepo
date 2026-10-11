@@ -892,6 +892,10 @@ export const jaJPAdmin = {
     portalVersionV1: "v1 · クラシック",
     portalVersionV2: "v2 · Launchpad",
     editPortal: "ポータルを編集",
+    disabledHostBehavior: "ドメイン無効化時の動作",
+    disabledHostBehaviorDescription:
+      "手動で無効にしたサブドメインにのみ適用されます。ブロックページ表示ではサービス利用不可の案内を返します。接続遮断ではページを返さず、HTTP/1 は接続を閉じ、HTTP/2・HTTP/3 は現在のリクエストストリームを中止します。許可時間外は従来の案内を表示します。",
+    disabledHostErrorPage: "ブロックページを表示",
     unmatchedRoute: "ルート未一致時の動作",
     unmatchedRouteDescription:
       "わかりやすいウェルカム、選択、エラーページを表示するか、ページを返さず HTTP/1 の TCP 接続をリセットし、HTTP/2 では現在のストリームだけを中止します。",

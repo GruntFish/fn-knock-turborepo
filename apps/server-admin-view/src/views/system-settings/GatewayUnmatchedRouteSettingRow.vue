@@ -9,7 +9,7 @@ const props = defineProps<{
   modelValue: GatewayUnmatchedRouteBehavior;
   resetConnectionLabel: string;
   title: string;
-  warning: string;
+  warning?: string;
 }>();
 
 const emit = defineEmits<{
@@ -31,7 +31,7 @@ const selectBehavior = (value: GatewayUnmatchedRouteBehavior) => {
         {{ description }}
       </div>
       <div
-        v-if="modelValue === 'reset_connection'"
+        v-if="warning && modelValue === 'reset_connection'"
         class="text-xs leading-5 text-amber-600 dark:text-amber-300"
       >
         {{ warning }}

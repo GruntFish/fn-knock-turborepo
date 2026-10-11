@@ -147,7 +147,8 @@ fn gateway_response_uses_node_defaults() {
         normalize_gateway_unmatched_route(&json!({})),
         json!({
             "behavior": "error_page",
-            "upstream_error_detail": "less"
+            "upstream_error_detail": "less",
+            "disabled_host_behavior": "error_page"
         })
     );
     assert_eq!(
@@ -220,6 +221,10 @@ async fn gateway_response_includes_default_unmatched_route_behavior() {
     assert_eq!(
         response.pointer("/unmatched_route/upstream_error_detail"),
         Some(&json!("less"))
+    );
+    assert_eq!(
+        response.pointer("/unmatched_route/disabled_host_behavior"),
+        Some(&json!("error_page"))
     );
     assert_eq!(response.pointer("/portal/version"), Some(&json!("v1")));
 }
@@ -602,4 +607,57 @@ fn gateway_portal_navigation_runtime_echo_rejects_legacy_backend() {
         )
         .is_ok()
     );
+}
+
+#[test]
+fn disabled_host_behavior_normalizes_and_preserves_partial_updates() {
+    for value in [json!({}), json!({"disabled_host_behavior": "invalid"})] {
+        assert_eq!(
+            normalize_gateway_unmatched_route(&value)["disabled_host_behavior"],
+            "error_page"
+        );
+    }
+    let mut config = json!({"gateway_unmatched_route": {
+        "behavior": "reset_connection", "upstream_error_detail": "more"
+    }});
+    apply_gateway_patch(
+        &mut config,
+        json!({"unmatched_route": {
+            "disabled_host_behavior": "reset_connection"
+        }})
+        .as_object()
+        .unwrap(),
+    );
+    assert_eq!(
+        config["gateway_unmatched_route"],
+        json!({
+            "behavior": "reset_connection", "upstream_error_detail": "more",
+            "disabled_host_behavior": "reset_connection"
+        })
+    );
+    apply_gateway_patch(
+        &mut config,
+        json!({"unmatched_route": {
+            "behavior": "error_page"
+        }})
+        .as_object()
+        .unwrap(),
+    );
+    assert_eq!(
+        config["gateway_unmatched_route"]["disabled_host_behavior"],
+        "reset_connection"
+    );
+}
+
+#[test]
+fn disabled_host_behavior_requires_gateway_acknowledgement() {
+    let requested = json!({"disabled_host_behavior": "reset_connection"});
+    let applied = json!({"success": true, "data": requested.clone()});
+    assert!(super::runtime::ensure_gateway_unmatched_route_applied(&requested, applied).is_ok());
+    let legacy = json!({"success": true, "data": {"behavior": "error_page"}});
+    let error = super::runtime::ensure_gateway_unmatched_route_applied(&requested, legacy.clone())
+        .unwrap_err();
+    assert!(error.contains("upgrade the gateway backend"));
+    assert!(error.contains("disabled_host_behavior"));
+    assert!(super::runtime::ensure_gateway_unmatched_route_applied(&json!({}), legacy).is_ok());
 }
