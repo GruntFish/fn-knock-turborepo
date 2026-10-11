@@ -13,6 +13,7 @@ impl std::error::Error for BeforeMutation {}
 /// Shared ordering for live mutations and deterministic failure-injection tests.
 pub(super) trait Backend {
     fn guard(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()>;
+    fn directories(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()>;
     fn verify_restore(&mut self, journal: &Journal) -> anyhow::Result<()>;
     fn check(&mut self, file: &FileChange) -> anyhow::Result<()>;
     fn file(&mut self, file: &FileChange, reverse: bool) -> anyhow::Result<()>;
@@ -27,6 +28,9 @@ pub(super) struct Native<'a> {
     pub https_port: Option<u16>,
 }
 impl Backend for Native<'_> {
+    fn directories(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
+        permissions::apply_directories(journal, reverse, self.data_dir)
+    }
     fn guard(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
         if !reverse {
             tls_probe::verify_configured_port(
@@ -34,6 +38,7 @@ impl Backend for Native<'_> {
                     .ok_or_else(|| anyhow!("Missing planned fnOS HTTPS port"))?,
             )?;
         }
+        permissions::check_directories(journal)?;
         let current = snapshot(self.data_dir)?;
         // Old journals must not be restored into a different supported layout.
         current.schema.verify_changes(&journal.rows)?;
@@ -43,11 +48,17 @@ impl Backend for Native<'_> {
         verify_restored(journal, self.data_dir)
     }
     fn check(&mut self, file: &FileChange) -> anyhow::Result<()> {
-        ensure_parent(Path::new(&file.path), self.data_dir)?;
+        validate_write_location(Path::new(&file.path), self.data_dir)?;
         check_file(file, true)
     }
     fn file(&mut self, file: &FileChange, reverse: bool) -> anyhow::Result<()> {
-        apply_file(file, reverse, self.data_dir)
+        apply_file(file, reverse, self.data_dir).with_context(|| {
+            format!(
+                "{} certificate file {}",
+                if reverse { "Restore" } else { "Apply" },
+                file.path
+            )
+        })
     }
     fn rows(&mut self, rows: &[RowChange], reverse: bool) -> anyhow::Result<()> {
         apply_rows(rows, reverse)
@@ -66,9 +77,19 @@ impl Backend for Native<'_> {
     }
 }
 pub(super) fn apply(journal: &Journal, backend: &mut impl Backend) -> anyhow::Result<()> {
-    backend
-        .guard(journal, false)
-        .map_err(|error| error.context(BeforeMutation))?;
+    let preflight = (|| {
+        backend.guard(journal, false)?;
+        for file in journal
+            .files
+            .iter()
+            .chain(std::iter::once(&journal.registry))
+        {
+            backend.check(file)?;
+        }
+        Ok::<(), anyhow::Error>(())
+    })();
+    preflight.map_err(|error| error.context(BeforeMutation))?;
+    backend.directories(journal, false)?;
     for file in journal
         .files
         .iter()
@@ -111,8 +132,13 @@ pub(super) fn restore(journal: &Journal, backend: &mut impl Backend) -> anyhow::
         backend.file(file, true)?;
     }
     backend.file(&journal.registry, true)?;
-    backend.refresh()?;
-    backend.verify_restore(journal)
+    backend.directories(journal, true)?;
+    backend
+        .refresh()
+        .context("Restart fnOS services during recovery")?;
+    backend
+        .verify_restore(journal)
+        .context("Verify restored fnOS certificates")
 }
 
 #[cfg(test)]
@@ -125,6 +151,7 @@ mod tests {
         bind_after_refresh: bool,
         bound: bool,
         refreshes: usize,
+        permission_writes: usize,
         guards: usize,
     }
     impl Fake {
@@ -137,6 +164,11 @@ mod tests {
         }
     }
     impl Backend for Fake {
+        fn directories(&mut self, _journal: &Journal, _reverse: bool) -> anyhow::Result<()> {
+            self.checkpoint("permissions")?;
+            self.permission_writes += 1;
+            Ok(())
+        }
         fn guard(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
             self.guards += 1;
             if self.guards == 2 {
@@ -220,12 +252,14 @@ mod tests {
         };
         let files = vec![
             FileChange {
+                applied_metadata: None,
                 original_metadata: None,
                 path: "cert".into(),
                 before: before.clone(),
                 after: after.clone(),
             },
             FileChange {
+                applied_metadata: None,
                 original_metadata: None,
                 path: NETWORK_CERT_INDEX.into(),
                 before: Some("old-index".into()),
@@ -233,6 +267,7 @@ mod tests {
             },
         ];
         let registry = FileChange {
+            applied_metadata: None,
             original_metadata: None,
             path: "registry".into(),
             before: Some("old-registry".into()),
@@ -250,11 +285,13 @@ mod tests {
             fail: None,
             bind_after_refresh: false,
             refreshes: 0,
+            permission_writes: 0,
             guards: 0,
             bound: false,
         };
         (
             Journal {
+                directories: Vec::new(),
                 completed: false,
                 files,
                 rows: vec![RowChange {
@@ -268,6 +305,22 @@ mod tests {
             backend,
         )
     }
+    #[test]
+    fn external_file_edits_fail_before_directory_database_or_service_changes() {
+        for kind in ["create", "update", "delete"] {
+            let (journal, mut backend) = fixture(kind);
+            backend.files.insert("cert".into(), Some("external".into()));
+            let before = backend.files.clone();
+            let row = backend.row.clone();
+            let error = apply(&journal, &mut backend).unwrap_err();
+            assert!(error.is::<BeforeMutation>());
+            assert_eq!(backend.permission_writes, 0);
+            assert_eq!(backend.refreshes, 0);
+            assert_eq!(backend.files, before);
+            assert_eq!(backend.row, row);
+        }
+    }
+
     #[test]
     fn recovery_failure_does_not_restart_services_on_subsequent_automatic_ticks() {
         let dir = tempfile::tempdir().unwrap();
@@ -310,6 +363,7 @@ mod tests {
             for phase in [
                 "guard",
                 "second_guard",
+                "permissions",
                 "file",
                 "database",
                 "index",

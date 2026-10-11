@@ -1,6 +1,7 @@
 //! Reconciliation and recoverable fnOS certificate mutations. No writes occur while planning.
 use super::*;
 mod automatic;
+mod permissions;
 #[cfg(test)]
 mod postgres_tests;
 mod schema;
@@ -58,6 +59,8 @@ pub(super) struct Plan {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct FileChange {
+    #[serde(default)]
+    applied_metadata: Option<SavedMetadata>,
     path: String,
     before: Option<String>,
     after: Option<String>,
@@ -110,6 +113,8 @@ struct RowChange {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Journal {
+    #[serde(default)]
+    directories: Vec<permissions::DirectoryChange>,
     completed: bool,
     files: Vec<FileChange>,
     rows: Vec<RowChange>,
@@ -352,7 +357,9 @@ pub(super) fn plan(data_dir: &Path, config: &Value) -> anyhow::Result<Plan> {
     }
     let https_port = tls_probe::configured_port()?;
     let snapshot = snapshot(data_dir)?;
-    plan_snapshot_with_port(snapshot, config, https_port)
+    let mut plan = plan_snapshot_with_port(snapshot, config, https_port)?;
+    permissions::extend_plan(&mut plan)?;
+    Ok(plan)
 }
 #[cfg(test)]
 fn plan_snapshot(snapshot: Snapshot, config: &Value) -> anyhow::Result<Plan> {
@@ -726,7 +733,51 @@ fn row_changes_sql(
     sql.push_str("COMMIT;");
     Ok(sql)
 }
+// Read-only validation is also used before recovery changes any database rows.
+fn validate_write_location(path: &Path, data_dir: &Path) -> anyhow::Result<()> {
+    if path == Path::new(NETWORK_CERT_INDEX) {
+        return validate_fixed_regular_file(path);
+    }
+    let root = if path.starts_with(CERT_ROOT) {
+        PathBuf::from(CERT_ROOT)
+    } else if path.starts_with(data_dir.join("fnos-certificate-sync")) {
+        data_dir.join("fnos-certificate-sync")
+    } else {
+        bail!("Unsafe certificate write path")
+    };
+    let relative = path.strip_prefix(&root)?;
+    anyhow::ensure!(
+        relative.components().next().is_some()
+            && relative
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_))),
+        "Unsafe certificate write path"
+    );
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("Missing file parent"))?;
+    let mut current = root.clone();
+    let mut parents = vec![current.clone()];
+    for part in parent.strip_prefix(&root)?.components() {
+        current.push(part);
+        parents.push(current.clone());
+    }
+    for parent in parents {
+        match fs::symlink_metadata(&parent) {
+            Ok(metadata) => anyhow::ensure!(
+                metadata.is_dir() && !metadata.file_type().is_symlink(),
+                "Unsafe certificate directory: {}",
+                parent.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 fn ensure_parent(path: &Path, data_dir: &Path) -> anyhow::Result<()> {
+    validate_write_location(path, data_dir)?;
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("Missing file parent"))?;
@@ -782,6 +833,7 @@ fn write_content_with_metadata(
     data_dir: &Path,
     saved: Option<&SavedMetadata>,
 ) -> anyhow::Result<()> {
+    permissions::check_path_access_rules(path)?;
     ensure_parent(path, data_dir)?;
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -807,15 +859,26 @@ fn write_content_with_metadata(
     Ok(())
 }
 fn check_file(change: &FileChange, reverse: bool) -> anyhow::Result<()> {
+    permissions::check_path_access_rules(Path::new(&change.path))?;
     let current = read_optional(Path::new(&change.path))?;
-    if current.is_some()
-        && let Some(saved) = &change.original_metadata
-        && SavedMetadata::read(Path::new(&change.path))? != *saved
-    {
-        bail!("Certificate file permissions changed externally; recovery backup preserved")
+    if current.is_some() {
+        let actual = SavedMetadata::read(Path::new(&change.path))?;
+        let original_matches = change.original_metadata.as_ref() == Some(&actual);
+        let applied_matches = change.applied_metadata.as_ref() == Some(&actual);
+        let metadata_recorded =
+            change.original_metadata.is_some() || change.applied_metadata.is_some();
+        if metadata_recorded && !original_matches && !(reverse && applied_matches) {
+            bail!(
+                "Certificate file permissions changed externally at {}; recovery backup preserved",
+                change.path
+            )
+        }
     }
     if current != change.before && !(reverse && current == change.after) {
-        bail!("Certificate files changed externally; recovery backup preserved")
+        bail!(
+            "Certificate files changed externally at {}; recovery backup preserved",
+            change.path
+        )
     }
     Ok(())
 }
@@ -827,7 +890,23 @@ fn apply_file(change: &FileChange, reverse: bool, data_dir: &Path) -> anyhow::Re
     };
     ensure_parent(Path::new(&change.path), data_dir)?;
     check_file(change, true)?;
+    let desired_metadata = if reverse {
+        &change.original_metadata
+    } else {
+        &change.applied_metadata
+    };
     if read_optional(Path::new(&change.path))? == *expected {
+        if let (Some(value), Some(metadata)) = (expected, desired_metadata)
+            && SavedMetadata::read(Path::new(&change.path))? != *metadata
+        {
+            // Publish content and metadata atomically, including metadata-only repairs.
+            write_content_with_metadata(
+                Path::new(&change.path),
+                &BASE64_STANDARD.decode(value)?,
+                data_dir,
+                Some(metadata),
+            )?;
+        }
         return Ok(());
     }
     check_file(change, reverse)?;
@@ -844,11 +923,7 @@ fn apply_file(change: &FileChange, reverse: bool, data_dir: &Path) -> anyhow::Re
                 Path::new(&change.path),
                 &BASE64_STANDARD.decode(value)?,
                 data_dir,
-                if reverse {
-                    change.original_metadata.as_ref()
-                } else {
-                    None
-                },
+                desired_metadata.as_ref(),
             )
         }
         None => {
@@ -927,8 +1002,9 @@ fn recover_locked(data_dir: &Path) -> anyhow::Result<()> {
         }
         verify_schema()?;
         automatic::mark_attempt(data_dir)?;
-        rollback(&journal, data_dir)
-            .context("Unfinished certificate synchronization needs recovery; backup preserved")?;
+        rollback(&journal, data_dir).map_err(|error| {
+            anyhow!("Unfinished certificate synchronization needs recovery; backup preserved at {}: {error:#}", path.path().display())
+        })?;
         journal.completed = true;
         save_journal(&path.path(), &journal, data_dir)?;
     }
@@ -971,6 +1047,7 @@ fn add_file(
         bail!("Missing certificate path")
     }
     let change = FileChange {
+        applied_metadata: None,
         path: path.to_string(),
         before: snapshot.files.get(path).cloned().flatten(),
         after,
@@ -1234,6 +1311,7 @@ fn prepare(plan: &Plan, selected: &[&Action], data_dir: &Path) -> anyhow::Result
     files.insert(
         NETWORK_CERT_INDEX.into(),
         FileChange {
+            applied_metadata: None,
             path: NETWORK_CERT_INDEX.into(),
             before: index_bytes,
             original_metadata: Some(SavedMetadata::read(Path::new(NETWORK_CERT_INDEX))?),
@@ -1241,10 +1319,12 @@ fn prepare(plan: &Plan, selected: &[&Action], data_dir: &Path) -> anyhow::Result
         },
     );
     Ok(Journal {
+        directories: Vec::new(),
         completed: false,
         files: files.into_values().collect(),
         rows,
         registry: FileChange {
+            applied_metadata: None,
             path: registry_path(data_dir).to_string_lossy().into(),
             before: snapshot.registry_bytes.clone(),
             original_metadata: if snapshot.registry_bytes.is_some() {
@@ -1321,7 +1401,8 @@ fn execute_mode(
             return Ok(summary);
         }
         attempted = selected.iter().map(|action| action.id.clone()).collect();
-        let journal = prepare(&plan, &selected, data_dir)?;
+        let mut journal = prepare(&plan, &selected, data_dir)?;
+        permissions::prepare(&mut journal)?;
         // IDs may have been reserved, but no certificate changes have happened at this point.
         if self::plan(data_dir, config)?.version != plan.version {
             bail!("stale certificate synchronization plan")
@@ -1339,7 +1420,6 @@ fn execute_mode(
                 https_port: Some(plan.https_port),
             },
         );
-        let mut journal = journal;
         if let Err(error) = result {
             // A port/schema/reference edit can invalidate the first guard after the
             // journal was saved. Restoring untouched state would unnecessarily restart
@@ -1353,10 +1433,10 @@ fn execute_mode(
                 Ok(()) => {
                     journal.completed = true;
                     save_journal(&path, &journal, data_dir)?;
-                    bail!("{error}; fnOS changes were rolled back")
+                    bail!("{error:#}; fnOS changes were rolled back")
                 }
-                Err(_) => bail!(
-                    "{error}; rollback stopped; recovery backup preserved at {}",
+                Err(rollback_error) => bail!(
+                    "{error:#}; rollback stopped: {rollback_error:#}; recovery backup preserved at {}",
                     path.display()
                 ),
             }
@@ -1399,6 +1479,8 @@ fn verify_applied(
     https_port: u16,
 ) -> anyhow::Result<()> {
     tls_probe::verify_configured_port(https_port)?;
+    permissions::verify_directories(journal, false)?;
+    permissions::verify_access(journal)?;
     let snapshot = snapshot(data_dir)?;
     for change in &journal.rows {
         let table = if change.table == "cert" {
@@ -1415,6 +1497,15 @@ fn verify_applied(
         .iter()
         .filter(|f| f.path != NETWORK_CERT_INDEX)
     {
+        if file.after.is_some()
+            && let Some(expected) = &file.applied_metadata
+        {
+            anyhow::ensure!(
+                SavedMetadata::read(Path::new(&file.path))? == *expected,
+                "Applied certificate permissions differ at {}",
+                file.path
+            );
+        }
         if read_optional(Path::new(&file.path))? != file.after {
             bail!("fnOS certificate file verification failed")
         }
@@ -1736,11 +1827,29 @@ mod tests {
             plan_snapshot(changed, &config).unwrap().version
         );
     }
+    #[cfg(unix)]
+    #[test]
+    fn recovery_path_preflight_is_read_only_and_rejects_unsafe_parents() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("fnos-certificate-sync");
+        validate_write_location(&root.join("nested/cert"), dir.path()).unwrap();
+        assert!(!root.exists());
+        assert!(validate_write_location(&root.join("../outside"), dir.path()).is_err());
+        assert!(validate_write_location(&dir.path().join("outside"), dir.path()).is_err());
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("not-a-directory"), b"preserve").unwrap();
+        assert!(validate_write_location(&root.join("not-a-directory/cert"), dir.path()).is_err());
+        std::os::unix::fs::symlink(dir.path(), root.join("link")).unwrap();
+        assert!(validate_write_location(&root.join("link/cert"), dir.path()).is_err());
+        assert_eq!(fs::read(root.join("not-a-directory")).unwrap(), b"preserve");
+    }
+
     #[test]
     fn file_recovery_is_idempotent_and_rejects_external_content() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fnos-certificate-sync/test");
         let change = FileChange {
+            applied_metadata: None,
             path: path.to_string_lossy().into(),
             before: None,
             after: Some(BASE64_STANDARD.encode("applied")),
@@ -1795,6 +1904,7 @@ mod tests {
     fn unfinished_transactions_are_never_pruned() {
         let dir = tempfile::tempdir().unwrap();
         let dummy = FileChange {
+            applied_metadata: None,
             path: String::new(),
             before: None,
             after: None,
@@ -1802,6 +1912,7 @@ mod tests {
         };
         for i in 0..13 {
             let journal = Journal {
+                directories: Vec::new(),
                 completed: i != 0,
                 files: vec![],
                 rows: vec![],
@@ -1933,6 +2044,7 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
         let metadata = SavedMetadata::read(&path).unwrap();
         let change = FileChange {
+            applied_metadata: None,
             path: path.to_string_lossy().into(),
             before: Some(BASE64_STANDARD.encode(b"original")),
             after: None,
@@ -1958,6 +2070,7 @@ mod tests {
         let path = root.join("link");
         symlink(&target, &path).unwrap();
         let change = FileChange {
+            applied_metadata: None,
             path: path.to_string_lossy().into(),
             before: None,
             after: Some(BASE64_STANDARD.encode(b"same")),
@@ -1980,6 +2093,7 @@ mod tests {
         assert_eq!(fs::metadata(&outside).unwrap().mode() & 0o777, 0o755);
         use transaction::Backend;
         let absent = FileChange {
+            applied_metadata: None,
             path: second
                 .path()
                 .join("fnos-certificate-sync/absent")
@@ -2007,15 +2121,18 @@ mod tests {
         current.index[0]["fullchain"] = json!("/fullchain");
         let encoded = Some(BASE64_STANDARD.encode(serde_json::to_vec(&current.index).unwrap()));
         let journal = Journal {
+            directories: Vec::new(),
             completed: false,
             files: vec![
                 FileChange {
+                    applied_metadata: None,
                     path: NETWORK_CERT_INDEX.into(),
                     before: encoded.clone(),
                     after: Some(BASE64_STANDARD.encode(b"[]")),
                     original_metadata: None,
                 },
                 FileChange {
+                    applied_metadata: None,
                     path: "/key".into(),
                     before: Some("original".into()),
                     after: None,
@@ -2029,6 +2146,7 @@ mod tests {
                 after: None,
             }],
             registry: FileChange {
+                applied_metadata: None,
                 path: "registry".into(),
                 before: None,
                 after: None,
@@ -2272,6 +2390,7 @@ fn ensure_removals_unreferenced(
     Ok(())
 }
 fn verify_restored(journal: &Journal, data_dir: &Path) -> anyhow::Result<()> {
+    permissions::verify_directories(journal, true)?;
     let current = snapshot(data_dir)?;
     for change in &journal.rows {
         let rows = if change.table == "cert" {
@@ -2293,6 +2412,15 @@ fn verify_restored(journal: &Journal, data_dir: &Path) -> anyhow::Result<()> {
         .chain(std::iter::once(&journal.registry))
     {
         check_file(file, true)?;
+        if file.before.is_some()
+            && let Some(expected) = &file.original_metadata
+        {
+            anyhow::ensure!(
+                SavedMetadata::read(Path::new(&file.path))? == *expected,
+                "Restored certificate permissions differ at {}",
+                file.path
+            );
+        }
         if read_optional(Path::new(&file.path))? != file.before {
             bail!("Restored certificate file verification failed")
         }

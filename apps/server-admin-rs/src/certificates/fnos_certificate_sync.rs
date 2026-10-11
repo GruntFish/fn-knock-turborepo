@@ -122,7 +122,7 @@ struct SyncExecutionError {
 
 impl std::fmt::Display for SyncExecutionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.source.fmt(formatter)
+        write!(formatter, "{:#}", self.source)
     }
 }
 
@@ -152,7 +152,7 @@ pub fn start_fnos_certificate_sync_tasks(state: AppState) {
             let data_dir = task_state.settings.data_dir.clone();
             match tokio::task::spawn_blocking(move || lifecycle::recover_automatic(&data_dir)).await {
                 Ok(Ok(())) => {},
-                Ok(Err(error)) => record_failure(&task_state, &error.to_string(), &[]).await,
+                Ok(Err(error)) => record_failure(&task_state, &format!("{error:#}"), &[]).await,
                 Err(error) => record_failure(&task_state, &error.to_string(), &[]).await,
             }
         }
@@ -185,7 +185,7 @@ pub fn start_fnos_certificate_sync_tasks(state: AppState) {
                         let data_dir = task_state.settings.data_dir.clone();
                         match tokio::task::spawn_blocking(move || lifecycle::recover_automatic(&data_dir)).await {
                             Ok(Ok(())) => {},
-                            Ok(Err(error)) => record_failure(&task_state, &error.to_string(), &[]).await,
+                            Ok(Err(error)) => record_failure(&task_state, &format!("{error:#}"), &[]).await,
                             Err(error) => record_failure(&task_state, &error.to_string(), &[]).await,
                         }
                         continue;
@@ -205,7 +205,6 @@ pub fn start_fnos_certificate_sync_tasks(state: AppState) {
                     match result {
                         Ok(Ok(summary)) => record_success(&task_state, &summary).await,
                         Ok(Err(error)) => {
-                            tracing::warn!(%error, "automatic fnOS certificate sync failed");
                             record_failure(&task_state, &error.to_string(), &error.target_ids).await;
                         }
                         Err(error) => record_failure(&task_state, &error.to_string(), &[]).await,
@@ -430,6 +429,8 @@ fn sanitize_availability_error(error: &anyhow::Error) -> String {
     if message.starts_with("Unsupported fnOS")
         || message.starts_with("Local certificate library")
         || message.starts_with("Unfinished certificate")
+        || (message.starts_with("Certificate path ")
+            && message.contains("has a POSIX ACL that cannot be safely journaled"))
     {
         return message;
     }
@@ -1062,6 +1063,7 @@ async fn automatic_paused(state: &AppState) -> anyhow::Result<bool> {
 }
 
 async fn record_failure(state: &AppState, error: &str, ids: &[String]) {
+    tracing::warn!(error, target_ids = ?ids, "fnOS certificate operation failed");
     if automatic_paused(state).await.unwrap_or(true) {
         state.runtime_health.operational_log(
             "WARN",
@@ -1079,6 +1081,23 @@ async fn record_failure(state: &AppState, error: &str, ids: &[String]) {
 mod tests {
     use super::*;
     use rcgen::generate_simple_self_signed;
+
+    #[test]
+    fn acl_availability_errors_keep_the_actionable_cause() {
+        let message = "Certificate path /usr/trim/var/trim_connect/ssls/example/cert.crt has a POSIX ACL that cannot be safely journaled; ACL-aware handling is required";
+        assert_eq!(sanitize_availability_error(&anyhow!(message)), message);
+    }
+
+    #[test]
+    fn sync_errors_preserve_nested_recovery_diagnostics() {
+        let error = anyhow!("Permission denied at certificate path")
+            .context("Restore certificate file")
+            .context("Unfinished certificate synchronization needs recovery; backup preserved");
+        let display = SyncExecutionError::new(error, &[]).to_string();
+        assert!(display.contains("needs recovery"));
+        assert!(display.contains("Restore certificate file"));
+        assert!(display.contains("Permission denied at certificate path"));
+    }
 
     #[test]
     fn normalizes_domain_sets_without_expanding_wildcards() {
