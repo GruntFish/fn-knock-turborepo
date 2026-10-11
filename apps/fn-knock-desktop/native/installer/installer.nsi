@@ -35,7 +35,7 @@ SetCompressorDictSize 32
   Pop $0
   Pop $1
   ${If} $0 == 2
-    MessageBox MB_YESNO|MB_ICONQUESTION "Knock 敲门管理程序正在运行。是否立即关闭并继续？" IDYES +2
+    MessageBox MB_YESNO|MB_ICONQUESTION "Knock 敲门管理程序正在运行。是否立即关闭并继续？" /SD IDNO IDYES +2
     Abort "用户取消了操作，未更改任何文件。"
     nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process -Name $\'fn-knock$\' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction Stop; Start-Sleep -Milliseconds 300; if (Get-Process -Name $\'fn-knock$\' -ErrorAction SilentlyContinue) { exit 1 }"'
     Pop $0

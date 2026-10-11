@@ -4,12 +4,36 @@ $ErrorActionPreference = 'Stop'
 if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Run this regression test with Windows PowerShell 5.1' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $hook = Join-Path $repo 'apps/fn-knock-desktop/native/installer/hooks.nsh'
-$lines = foreach ($line in Get-Content -Encoding UTF8 -LiteralPath $hook) {
-  if ($line -match '^  FileWrite \$R7 "(.*)"$') {
-    $matches[1].Replace('$\r$\n', "`r`n").Replace('$\"', '"').Replace('$$', '$')
+$writes = @(Get-Content -Encoding UTF8 -LiteralPath $hook | Where-Object { $_ -match '^  FileWriteUTF16LE (?:/BOM )?\$R7 "(.*)"$' })
+if ($writes.Count -eq 0) { throw 'The transaction helper must use UTF-16LE writes' }
+# Compile the real write instructions: parsing the .nsh text alone misses ANSI
+# corruption of Chinese paths on English Windows installations.
+$encodingRoot = Join-Path ([IO.Path]::GetTempPath()) ('FnKnock-helper-encoding-' + [guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($encodingRoot)
+try {
+  $generatedPath = Join-Path $encodingRoot 'transaction.ps1'
+  $writerPath = Join-Path $encodingRoot 'writer.exe'
+  $writerSource = Join-Path $encodingRoot 'writer.nsi'
+  $header = @('Unicode true', 'RequestExecutionLevel user', 'SilentInstall silent', '!define FNKNOCK_SERVICE "FnKnock"', ('OutFile "' + $writerPath + '"'), 'Section', ('FileOpen $R7 "' + $generatedPath + '" w'))
+  [IO.File]::WriteAllLines($writerSource, @($header) + $writes + @('FileClose $R7', 'SectionEnd'), [Text.UTF8Encoding]::new($true))
+  $compiler = Get-Command makensis.exe -ErrorAction SilentlyContinue
+  $compilerPath = if ($compiler) { $compiler.Source } else { Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe' }
+  & $compilerPath /INPUTCHARSET UTF8 $writerSource | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw 'Could not compile the transaction helper encoding fixture' }
+  $writer = [Diagnostics.Process]::Start($writerPath)
+  try {
+    if (-not $writer.WaitForExit(30000)) { $writer.Kill(); throw 'Transaction helper encoding fixture timed out' }
+    if ($writer.ExitCode -ne 0) { throw 'Transaction helper encoding fixture failed' }
+  } finally { $writer.Dispose() }
+  $bytes = [IO.File]::ReadAllBytes($generatedPath)
+  if ($bytes.Length -lt 2 -or $bytes[0] -ne 0xff -or $bytes[1] -ne 0xfe) { throw 'Transaction helper must start with a UTF-16LE BOM' }
+  $source = [IO.File]::ReadAllText($generatedPath)
+  $expected = foreach ($line in $writes) {
+    [void]($line -match '^  FileWriteUTF16LE (?:/BOM )?\$R7 "(.*)"$')
+    $matches[1].Replace('$\r$\n', "`r`n").Replace('$\"', '"').Replace('$$', '$').Replace('${FNKNOCK_SERVICE}', 'FnKnock')
   }
-}
-$source = $lines -join ''
+  if ($source -cne ($expected -join '')) { throw 'NSIS changed the transaction helper text or Chinese paths' }
+} finally { Remove-Item -LiteralPath $encodingRoot -Recurse -Force }
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
