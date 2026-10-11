@@ -122,14 +122,14 @@ pub(crate) async fn inspect_copy(path: &Path) -> CopyReport {
                         "[invalid migration name]".into()
                     };
                     let digest = checksum.strip_prefix("sha256:").unwrap_or(&checksum);
-                    let checksum =
-                        if digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()) {
-                            checksum
-                        } else if checksum == "v1" {
-                            checksum
-                        } else {
-                            "[invalid checksum]".into()
-                        };
+                    let checksum = if (digest.len() == 64
+                        && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+                        || checksum == "v1"
+                    {
+                        checksum
+                    } else {
+                        "[invalid checksum]".into()
+                    };
                     report.migrations.push(MigrationRecord {
                         table: table.to_string(),
                         version,

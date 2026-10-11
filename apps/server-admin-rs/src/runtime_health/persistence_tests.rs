@@ -303,12 +303,11 @@ async fn shutdown_allows_slow_writes_beyond_the_normal_probe_budget() {
     }
     let lock = tokio_rusqlite::rusqlite::Connection::open(&state.settings.sqlite_path).unwrap();
     lock.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let release = tokio::spawn(async move {
+    let release = async move {
         tokio::time::sleep(EVENT_WRITE_BUDGET * 3).await;
         lock.execute_batch("ROLLBACK").unwrap();
-    });
-    runtime.finish_monitor(&state).await;
-    release.await.unwrap();
+    };
+    tokio::join!(runtime.finish_monitor(&state), release);
     assert!(runtime.inner.pending_events.lock().await.is_empty());
     assert_eq!(events(&state).await.len(), 2);
 }

@@ -129,6 +129,8 @@ const isCriticalHtmlPreload = (dependency: string) => {
 
 export default defineConfig({
   base: "./",
+  // The shared i18n runtime uses legacy: false; omit the unused legacy API.
+  define: { __VUE_I18N_LEGACY_API__: false },
   publicDir: path.resolve(__dirname, "../../packages/icons"),
   plugins: [
     createGhosttyExternalWasmPlugin(),

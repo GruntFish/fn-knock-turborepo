@@ -1,5 +1,5 @@
 {
-  "version": "2.5.2",
+  "version": "2.5.3",
   "releaseChannel": "stable",
   "githubUrl": "https://github.com/kci-lnk/fn-knock-turborepo",
   "gatewayCommit": "c90cbcdc3372de1b6c3c4799019d5f330e59641e",

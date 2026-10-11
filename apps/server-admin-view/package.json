@@ -34,7 +34,7 @@
     "pinia": "^3.0.4",
     "qrcode.vue": "^3.8.0",
     "reka-ui": "^2.9.0",
-    "smol-toml": "^1.6.1",
+    "smol-toml": "^1.9.1",
     "tailwind-merge": "^3.5.0",
     "uplot": "^1.6.32",
     "vue": "^3.5.25",
