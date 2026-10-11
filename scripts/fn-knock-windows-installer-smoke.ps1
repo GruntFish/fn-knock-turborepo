@@ -458,8 +458,17 @@ function Assert-UninstalledRuntime {
 
   Wait-ServiceAbsent -TimeoutSeconds $TimeoutSeconds
   Wait-FirewallRulesAbsent -TimeoutSeconds $TimeoutSeconds
-  Assert-Condition (-not (Test-Path -LiteralPath $ProductRoot)) `
-    "NSIS uninstall left the Program Files install root behind"
+  # NSIS launches a temporary uninstaller and its original process exits first.
+  # SCM removal happens before that child finishes deleting the installed files.
+  $cleanupDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  while (Test-Path -LiteralPath $ProductRoot) {
+    if ([DateTime]::UtcNow -ge $cleanupDeadline) {
+      Get-ChildItem -LiteralPath $ProductRoot -Recurse -Force -ErrorAction SilentlyContinue |
+        Select-Object FullName, Attributes | Format-Table -AutoSize | Out-Host
+      throw "NSIS uninstall left the Program Files install root behind after $TimeoutSeconds seconds"
+    }
+    Start-Sleep -Milliseconds 250
+  }
   Assert-Condition (Test-Path -LiteralPath $ProgramDataRoot -PathType Container) `
     "NSIS uninstall removed ProgramData instead of retaining it"
   Assert-InstallerMetadataAbsent
