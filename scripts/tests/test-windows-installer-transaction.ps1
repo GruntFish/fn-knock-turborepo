@@ -50,14 +50,27 @@ try {
   $key = $base.OpenSubKey($fixtureKey); Assert ($key.GetValue('fixture') -eq 'original') 'Registry metadata was not restored'; $key.Dispose()
   Assert ((Get-Content -Raw -LiteralPath $shortcutEntries[0].Path) -eq 'original shortcut') 'Shortcut was not restored'
   $permissionKey = $base.OpenSubKey($fixtureKey, [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, [System.Security.AccessControl.RegistryRights]::ChangePermissions -bor [System.Security.AccessControl.RegistryRights]::ReadPermissions)
-  $originalAcl = $permissionKey.GetAccessControl()
+  $accessSection = [System.Security.AccessControl.AccessControlSections]::Access
+  $originalAclSddl = $permissionKey.GetAccessControl().GetSecurityDescriptorSddlForm($accessSection)
   try {
     $deniedAcl = $permissionKey.GetAccessControl()
     $deny = [System.Security.AccessControl.RegistryAccessRule]::new([Security.Principal.WindowsIdentity]::GetCurrent().User, [System.Security.AccessControl.RegistryRights]::Delete, [System.Security.AccessControl.AccessControlType]::Deny)
     $deniedAcl.AddAccessRule($deny); $permissionKey.SetAccessControl($deniedAcl)
     Expect-Failure { Restore-FnKnockInstallerMetadata 'first' }
     Assert (Test-Path -LiteralPath (Join-Path $registrySnapshot 'fixture.reg')) 'Failed registry restore lost its snapshot'
-  } finally { $permissionKey.SetAccessControl($originalAcl); $permissionKey.Dispose() }
+  } finally {
+    try {
+      # SetAccessControl persists only sections marked as modified. A freshly
+      # read original ACL has no dirty sections, so applying it is a no-op.
+      $restoredAcl = $permissionKey.GetAccessControl()
+      $restoredAcl.SetSecurityDescriptorSddlForm($originalAclSddl, $accessSection)
+      $permissionKey.SetAccessControl($restoredAcl)
+    } finally { $permissionKey.Dispose() }
+  }
+  $key = $base.OpenSubKey($fixtureKey)
+  try {
+    Assert ($key.GetAccessControl().GetSecurityDescriptorSddlForm($accessSection) -eq $originalAclSddl) 'Permission fixture did not restore its original registry ACL'
+  } finally { $key.Dispose() }
 
 
   [void][IO.Directory]::CreateDirectory((Join-Path $root 'data\storage'))
