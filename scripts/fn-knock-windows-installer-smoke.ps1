@@ -509,6 +509,84 @@ function Assert-InstallerUpgradesLegacyBundleIdentity {
   Assert-UninstalledRuntime -TimeoutSeconds $UninstallTimeoutSeconds
 }
 
+function Assert-FailedUpgradeRestoresRuntime {
+  $fixture = Join-Path $ClassificationFixtureRoot 'failed-upgrade'
+  $runtime = Join-Path $fixture 'runtime'
+  New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+  foreach ($name in @('ui','server-auth-view')) { Copy-Item -LiteralPath (Join-Path $InstallRoot $name) -Destination (Join-Path $runtime $name) -Recurse -Force }
+  $originalIdentity = Get-Content -Raw -LiteralPath $BundleIdentityPath
+  $identity = $originalIdentity | ConvertFrom-Json
+  $version = [string]$identity.version
+  $identity.version = '0.0.0-failure-fixture'
+  [IO.File]::WriteAllText((Join-Path $runtime 'bundle.json'), ($identity | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+  $candidate = Join-Path $fixture 'broken-upgrade.exe'
+  $compiler = Get-Command makensis.exe -ErrorAction SilentlyContinue
+  $compilerPath = if ($compiler) { $compiler.Source } else { Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe' }
+  Assert-File $compilerPath
+  $numeric = @($version.Split('.')); while ($numeric.Count -lt 4) { $numeric += '0' }
+  Invoke-NativeChecked -FilePath $compilerPath -Arguments @(
+    '/INPUTCHARSET', 'UTF8', ('/DVERSION=' + $version), ('/DNUMERIC_VERSION=' + ($numeric -join '.')),
+    ('/DOUTPUT_FILE=' + $candidate), ('/DDESKTOP_EXE=' + $DesktopExecutable),
+    ('/DBUNDLE_ROOT=' + $InstallRoot), ('/DRUNTIME_ROOT=' + $runtime),
+    ('/DICON_FILE=' + (Join-Path $Root 'apps/fn-knock-desktop/native/assets/icon.ico')),
+    (Join-Path $Root 'apps/fn-knock-desktop/native/installer/installer.nsi')
+  )
+  $before = @{}
+  foreach ($path in @($ServiceExecutable, $GatewayExecutable, $DesktopExecutable, $BundleIdentityPath, $AltchaHmacKeyPath)) { $before[$path] = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash }
+  $sentinel = Join-Path $ProgramDataRoot 'data\rollback-sentinel.txt'
+  [IO.File]::WriteAllText($sentinel, 'persistent original state')
+  Invoke-NativeExpectFailure -FilePath $candidate -Arguments @('/S')
+  Assert-InstalledRuntime -TimeoutSeconds $ReadyTimeoutSeconds
+  foreach ($path in $before.Keys) { Assert-Condition ((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash -eq $before[$path]) ('Failed upgrade did not restore ' + $path) }
+  Assert-Condition ((Get-Content -Raw -LiteralPath $sentinel) -eq 'persistent original state') 'Failed upgrade lost persistent data'
+  Assert-Condition (-not (Test-Path -LiteralPath (Join-Path $ProgramDataRoot 'rollback\pending\transaction.pending'))) 'Recovered upgrade retained an armed marker'
+  Remove-Item -LiteralPath $sentinel -Force
+  Remove-Item -LiteralPath $fixture -Recurse -Force
+}
+
+function Assert-StaleFirstTransactionRecovery {
+  param([bool]$Armed)
+  $pending = Join-Path $ProgramDataRoot 'rollback\pending'
+  foreach ($directory in @('registry','shortcuts','bundle','data')) { New-Item -ItemType Directory -Force -Path (Join-Path $pending $directory) | Out-Null }
+  [IO.File]::WriteAllText((Join-Path $pending 'transaction.pending'), 'first')
+  if ($Armed) { [IO.File]::WriteAllText((Join-Path $pending 'snapshot.ready'), 'ready') }
+  foreach ($name in @('product','uninstall')) { [IO.File]::WriteAllText((Join-Path $pending ('registry\' + $name + '.missing')), 'missing') }
+  foreach ($name in @('start-menu','desktop')) { [IO.File]::WriteAllText((Join-Path $pending ('shortcuts\' + $name + '.missing')), 'missing') }
+  Assert-InstallerMetadataAbsent
+  Invoke-NativeChecked -FilePath $SetupPath -Arguments @('/S')
+  Assert-InstalledRuntime -TimeoutSeconds $ReadyTimeoutSeconds
+  Invoke-NativeChecked -FilePath (Join-Path $InstallRoot 'uninstall.exe') -Arguments @('/S')
+  Assert-UninstalledRuntime -TimeoutSeconds $UninstallTimeoutSeconds
+}
+
+function Assert-FailedReinstallPreservesData {
+  # A corrupt fixture gives a deterministic startup failure without changing machine environment.
+  $storage = Join-Path $ProgramDataRoot 'data\storage'
+  $backup = Join-Path $ClassificationFixtureRoot 'healthy-storage'
+  Copy-Item -LiteralPath $storage -Destination $backup -Recurse -Force
+  try {
+    Get-ChildItem -LiteralPath $storage -Force | Remove-Item -Recurse -Force
+    $database = Join-Path $storage 'fn-knock.sqlite3'
+    [IO.File]::WriteAllText($database, 'not a SQLite database')
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $database).Hash
+    $secretHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $AltchaHmacKeyPath).Hash
+    foreach ($attempt in 1..2) {
+      Invoke-NativeExpectFailure -FilePath $SetupPath -Arguments @('/S')
+      Assert-Condition ((Get-FileHash -Algorithm SHA256 -LiteralPath $database).Hash -eq $hash) 'Failed reinstall changed the original database'
+      Assert-Condition ((Get-FileHash -Algorithm SHA256 -LiteralPath $AltchaHmacKeyPath).Hash -eq $secretHash) 'Failed reinstall changed retained secrets'
+      Assert-Condition (-not (Test-Path -LiteralPath (Join-Path $ProgramDataRoot 'rollback\pending\transaction.pending'))) 'Failed reinstall left an armed recovery loop'
+      Assert-Condition ($null -eq (Get-FnKnockService)) 'Failed reinstall retained a service'
+      Assert-InstallerMetadataAbsent
+      $log = Get-Content -Raw -LiteralPath (Join-Path $ProgramDataRoot 'logs\installer.log')
+      Assert-Condition ($log -match 'NotADatabase') 'Installer diagnostics lost the SQLite root cause'
+    }
+  } finally {
+    Remove-Item -LiteralPath $storage -Recurse -Force
+    Copy-Item -LiteralPath $backup -Destination $storage -Recurse -Force
+    Remove-Item -LiteralPath $backup -Recurse -Force
+  }
+}
+
 function Add-DanglingServiceFixture {
   Assert-Condition (-not (Test-Path -LiteralPath $ServiceExecutable)) `
     "The repair-first fixture requires the service executable to be absent"
@@ -576,6 +654,18 @@ function Assert-FirstInstallPreservesNonEmptyDirectory {
 }
 
 function Write-InstallerDiagnostics {
+  # Capture only bounded operational files before fixture cleanup, never databases/secrets.
+  if ($env:RUNNER_TEMP) {
+    $destination = Join-Path $env:RUNNER_TEMP "fn-knock-windows-diagnostics/installer"
+    New-Item -ItemType Directory -Force -Path $destination | Out-Null
+    foreach ($relative in @('logs/service.log','logs/service.log.1','logs/installer.log','logs/installer.log.1','state/status.json')) {
+      $source = Join-Path $ProgramDataRoot $relative
+      if (Test-Path -LiteralPath $source -PathType Leaf) {
+        Copy-Item -LiteralPath $source -Destination (Join-Path $destination ($relative.Replace('/','-'))) -Force
+      }
+    }
+  }
+
   Write-Warning "FnKnock installer smoke test diagnostics follow"
   try {
     & sc.exe queryex $ServiceName 2>&1 | ForEach-Object { Write-Warning $_ }
@@ -760,11 +850,15 @@ try {
   Invoke-NativeChecked -FilePath $SetupPath -Arguments @("/S")
   Assert-InstalledRuntime -TimeoutSeconds $ReadyTimeoutSeconds
   Save-BundleClassificationFixture
+  Assert-FailedUpgradeRestoresRuntime
 
   Write-Host "Uninstalling NSIS package silently"
   Invoke-NativeChecked -FilePath (Join-Path $InstallRoot "uninstall.exe") -Arguments @("/S")
   Assert-UninstalledRuntime -TimeoutSeconds $UninstallTimeoutSeconds
 
+  Assert-StaleFirstTransactionRecovery -Armed $false
+  Assert-StaleFirstTransactionRecovery -Armed $true
+  Assert-FailedReinstallPreservesData
   Assert-InstallerRejectsMalformedCompleteBundle
   Assert-InstallerUpgradesLegacyBundleIdentity
   Assert-FirstInstallPreservesNonEmptyDirectory

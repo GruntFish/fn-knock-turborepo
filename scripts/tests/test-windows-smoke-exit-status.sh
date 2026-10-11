@@ -135,15 +135,19 @@ acl_verify_line="$(grep -nF 'Assert-FnKnockInstallerTreeAcl $$PSScriptRoot' "${I
 action_dispatch_line="$(grep -nF 'switch ($$Action)' "${INSTALLER_HOOK}" | cut -d: -f1)"
 [ "${acl_normalize_line}" -lt "${acl_verify_line}" ] && [ "${acl_verify_line}" -lt "${action_dispatch_line}" ] || \
   fail "installer helper must normalize and verify its ACL before action dispatch"
-grep -Fq "[Console]::Error.WriteLine(('FnKnock installer ' + \$\$Action + ' failed: ' + \$\$_.Exception.Message))" "${INSTALLER_HOOK}" || \
+grep -Fq "[Console]::Error.WriteLine(('FnKnock installer ' + \$\$Action + ' failed: ' + \$\$failureDetail))" "${INSTALLER_HOOK}" || \
   fail "installer transaction failures must emit a concise actionable error"
 
-workflow_smoke_calls="$(
-  grep -HnE 'fn-knock-windows-(smoke|installer-smoke)\.ps1' \
-    "${RELEASE_WORKFLOW}" "${WINDOWS_WORKFLOW}" || true
-)"
-[ -z "${workflow_smoke_calls}" ] || \
-  fail "GitHub Actions must not run Windows smoke/install lifecycle tests: ${workflow_smoke_calls}"
+for workflow in "${RELEASE_WORKFLOW}" "${WINDOWS_WORKFLOW}"; do
+  grep -Fq './scripts/fn-knock-windows-smoke.ps1' "${workflow}" || \
+    fail "Windows runtime smoke must gate ${workflow}"
+  grep -Fq './scripts/fn-knock-windows-installer-smoke.ps1 -SetupPath $setup' "${workflow}" || \
+    fail "Actual NSIS lifecycle must gate ${workflow}"
+  grep -Fq 'shell: powershell' "${workflow}" || \
+    fail "Generated transaction helper must be tested on Windows PowerShell 5.1"
+  grep -Fq './scripts/tests/test-windows-installer-transaction.ps1' "${workflow}" || \
+    fail "Transaction regression tests must gate ${workflow}"
+done
 
 grep -Fq './scripts/fn-knock-windows-finalize.ps1 -SetupPath $setup -SignaturePolicy Unsigned' \
   "${RELEASE_WORKFLOW}" || \

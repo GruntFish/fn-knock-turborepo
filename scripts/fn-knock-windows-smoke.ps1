@@ -428,6 +428,18 @@ function Test-ManagedGatewayPresent {
 }
 
 function Write-SmokeDiagnostics {
+  # Capture only bounded operational files before fixture cleanup, never databases/secrets.
+  if ($env:RUNNER_TEMP) {
+    $destination = Join-Path $env:RUNNER_TEMP "fn-knock-windows-diagnostics/runtime"
+    New-Item -ItemType Directory -Force -Path $destination | Out-Null
+    foreach ($relative in @('logs/service.log','logs/service.log.1','logs/installer.log','logs/installer.log.1','state/status.json')) {
+      $source = Join-Path $ProgramDataRoot $relative
+      if (Test-Path -LiteralPath $source -PathType Leaf) {
+        Copy-Item -LiteralPath $source -Destination (Join-Path $destination ($relative.Replace('/','-'))) -Force
+      }
+    }
+  }
+
   Write-Warning "FnKnock Windows smoke test diagnostics follow"
   try {
     & sc.exe queryex $ServiceName 2>&1 | ForEach-Object { Write-Warning $_ }
@@ -758,6 +770,34 @@ try {
     -AuthPort ([int]$runtimeConfig.auth_port) `
     -ExpectedAltchaHmacKey $altchaHmacKey | Out-Null
 
+  Write-Host "Verifying the third recovery succeeds and a fourth crash stays stopped"
+  Stop-Process -Id $afterRustCrash.ServiceProcessId -Force
+  $thirdRecovery = Wait-FnKnockReady `
+    -AdminPort ([int]$runtimeConfig.admin_port) `
+    -ExpectedVersion ([string]$bundleIdentity.version) `
+    -ExpectedControlApiVersion ([int]$bundleIdentity.control_api_version) `
+    -PreviousServiceProcessId $afterRustCrash.ServiceProcessId `
+    -PreviousGatewayProcessId $afterRustCrash.GatewayProcessId `
+    -TimeoutSeconds $RecoveryTimeoutSeconds
+  Assert-ProcessImage -ProcessId $thirdRecovery.ServiceProcessId -ExpectedPath $ServiceExecutable
+  Stop-Process -Id $thirdRecovery.ServiceProcessId -Force
+  Wait-ServiceState -State "Stopped" -TimeoutSeconds 15
+  $noRestartUntil = [DateTime]::UtcNow.AddSeconds(70)
+  while ([DateTime]::UtcNow -lt $noRestartUntil) {
+    Assert-Condition ((Get-Service -Name $ServiceName).Status -eq 'Stopped') 'SCM restarted after the three-recovery limit'
+    Start-Sleep -Milliseconds 500
+  }
+  Assert-Condition (-not (Test-ManagedGatewayPresent)) 'Gateway survived the final service crash'
+  # An operator can still start a repaired service after automatic recovery ends.
+  Invoke-NativeChecked -FilePath $ServiceExecutable -Arguments @('start')
+  $afterRustCrash = Wait-FnKnockReady `
+    -AdminPort ([int]$runtimeConfig.admin_port) `
+    -ExpectedVersion ([string]$bundleIdentity.version) `
+    -ExpectedControlApiVersion ([int]$bundleIdentity.control_api_version) `
+    -TimeoutSeconds $ReadyTimeoutSeconds
+
+  & (Join-Path $PSScriptRoot 'tests/windows-storage-diagnostic.ps1') -ServiceExecutable $ServiceExecutable -Database (Join-Path $ProgramDataRoot 'data/storage/fn-knock.sqlite3') -ExpectRunning
+
   Write-Host "Stopping normally and verifying the gateway does not survive"
   Invoke-NativeChecked -FilePath $ServiceExecutable -Arguments @("stop")
   Wait-ServiceState -State "Stopped" -TimeoutSeconds 30
@@ -767,6 +807,8 @@ try {
     -Description "The gateway after a normal SCM stop"
   Assert-Condition (-not (Test-ManagedGatewayPresent)) `
     "A staged fn-knock-gateway.exe survived normal service stop"
+
+  & (Join-Path $PSScriptRoot 'tests/windows-storage-diagnostic.ps1') -ServiceExecutable $ServiceExecutable -Database (Join-Path $ProgramDataRoot 'data/storage/fn-knock.sqlite3')
 
   Write-Host "Uninstalling and verifying service/firewall cleanup with ProgramData retention"
   Invoke-NativeChecked -FilePath $ServiceExecutable -Arguments @("uninstall")

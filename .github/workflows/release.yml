@@ -416,6 +416,40 @@ jobs:
           -RequireCleanTree
           -GoRepository "${{ github.workspace }}\Go-Reauth-Proxy"
 
+      - name: Verify Windows storage diagnostics and service failure policy
+        shell: pwsh
+        run: |
+          $env:FN_KNOCK_TEST_DISABLE_PRIVATE_ACLS = '1'
+          try {
+            foreach ($filter in @('storage::startup_diagnostics::tests','storage::offline_diagnostic::tests','storage::redis_compat::tests::migrations','windows_service::tests')) {
+              cargo test --locked --manifest-path apps/server-admin-rs/Cargo.toml --lib $filter -- --test-threads=1
+              if ($LASTEXITCODE -ne 0) { throw "Windows regression tests failed: $filter" }
+            }
+          } finally { Remove-Item Env:FN_KNOCK_TEST_DISABLE_PRIVATE_ACLS -ErrorAction SilentlyContinue }
+
+      - name: Verify generated transaction helper on Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/tests/test-windows-installer-transaction.ps1
+
+      - name: Verify Windows runtime lifecycle and offline diagnostics
+        shell: pwsh
+        run: ./scripts/fn-knock-windows-smoke.ps1
+
+      - name: Verify actual NSIS install, recovery and retained data
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path "dist\windows\fn-knock-*-windows-x86_64-unsigned-setup.exe").Path
+          ./scripts/fn-knock-windows-installer-smoke.ps1 -SetupPath $setup
+
+      - name: Upload Windows failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-failure-diagnostics
+          path: ${{ runner.temp }}/fn-knock-windows-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Finalize unsigned installer metadata
         shell: pwsh
         run: |
