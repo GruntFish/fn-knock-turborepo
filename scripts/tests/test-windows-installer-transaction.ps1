@@ -67,7 +67,11 @@ try {
     $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-18'), [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
     if ($entry -eq $aclLeaf) { [IO.File]::SetAccessControl($entry, $acl) } else { [IO.Directory]::SetAccessControl($entry, $acl) }
   }
-  Bootstrap-FnKnockDataTreeAccess $aclFixture $takeown $icacls $null
+  $previousVerbosePreference = $VerbosePreference
+  try {
+    $VerbosePreference = 'Continue'
+    Bootstrap-FnKnockDataTreeAccess $aclFixture $takeown $icacls $null
+  } finally { $VerbosePreference = $previousVerbosePreference }
   Assert ([IO.File]::ReadAllText($aclLeaf) -ceq 'retained data') 'ACL repair lost retained file contents'
   $outside = Join-Path $root 'outside'
   [void][IO.Directory]::CreateDirectory($outside)

@@ -69,6 +69,10 @@ jobs:
           npm ci
           choco install nsis --no-progress -y
 
+      - name: Verify generated transaction helper on Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/tests/test-windows-installer-transaction.ps1
+
       - name: Build unsigned native runtime and installer
         shell: pwsh
         run: >-
@@ -77,10 +81,6 @@ jobs:
           -BundleInstaller
           -RequireCleanTree
           -GoRepository "${{ github.workspace }}\Go-Reauth-Proxy"
-
-      - name: Verify generated transaction helper on Windows PowerShell 5.1
-        shell: powershell
-        run: ./scripts/tests/test-windows-installer-transaction.ps1
 
       - name: Verify Windows runtime lifecycle and offline diagnostics
         shell: pwsh

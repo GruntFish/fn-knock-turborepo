@@ -406,6 +406,10 @@ jobs:
           npm ci
           choco install nsis --no-progress -y
 
+      - name: Verify generated transaction helper on Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/tests/test-windows-installer-transaction.ps1
+
       - name: Build unsigned native runtime and NSIS installer
         shell: pwsh
         run: >-
@@ -426,10 +430,6 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "Windows regression tests failed: $filter" }
             }
           } finally { Remove-Item Env:FN_KNOCK_TEST_DISABLE_PRIVATE_ACLS -ErrorAction SilentlyContinue }
-
-      - name: Verify generated transaction helper on Windows PowerShell 5.1
-        shell: powershell
-        run: ./scripts/tests/test-windows-installer-transaction.ps1
 
       - name: Verify Windows runtime lifecycle and offline diagnostics
         shell: pwsh
