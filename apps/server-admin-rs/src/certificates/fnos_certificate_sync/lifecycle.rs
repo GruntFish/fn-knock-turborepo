@@ -156,6 +156,13 @@ fn table_rows(table: &str) -> anyhow::Result<Vec<Value>> {
     ))?;
     Ok(serde_json::from_str(value.trim())?)
 }
+fn index_file_paths(entry: &Value) -> impl Iterator<Item = &str> {
+    ["certificate", "privateKey", "fullchain"]
+        .into_iter()
+        .filter_map(|key| entry[key].as_str())
+        .filter(|path| !path.is_empty())
+}
+
 fn file_paths(row: &Value, index: &[Value]) -> BTreeSet<String> {
     let mut paths = ["certificate", "private_key", "issuer_certificate"]
         .into_iter()
@@ -1180,7 +1187,11 @@ fn prepare(plan: &Plan, selected: &[&Action], data_dir: &Path) -> anyhow::Result
                     .rows
                     .iter()
                     .filter(|row| row["id"] != original["id"])
-                    .any(|row| file_paths(row, &snapshot.index).contains(&path));
+                    .any(|row| file_paths(row, &snapshot.index).contains(&path))
+                    || snapshot.index.iter().any(|entry| {
+                        entry["certificate"] != original["certificate"]
+                            && index_file_paths(entry).any(|referenced| referenced == path)
+                    });
                 if !shared {
                     add_file(&mut files, snapshot, &path, None)?;
                 }
@@ -2114,6 +2125,179 @@ mod tests {
         );
     }
 
+    pub(super) fn batch_removal_fixture(reverse: bool) -> (Journal, Snapshot) {
+        let (mut current, _) = fixture();
+        let mut second = current.rows[0].clone();
+        second["id"] = json!(9);
+        second["certificate"] = json!("/second-cert");
+        second["private_key"] = json!("/second-key");
+        current.rows.push(second);
+        current.index[0]["fullchain"] = json!("/fullchain");
+        let mut second_index = current.index[0].clone();
+        second_index["certificate"] = json!("/second-cert");
+        second_index["privateKey"] = json!("/second-key");
+        second_index["fullchain"] = json!("/second-fullchain");
+        current.index.push(second_index);
+        let change = |path: String, contents: String| FileChange {
+            path,
+            before: if reverse {
+                None
+            } else {
+                Some(contents.clone())
+            },
+            after: if reverse { Some(contents) } else { None },
+            original_metadata: None,
+            applied_metadata: None,
+        };
+        let mut files = current
+            .rows
+            .iter()
+            .flat_map(|row| {
+                file_paths(row, &current.index)
+                    .into_iter()
+                    .map(|path| change(path, BASE64_STANDARD.encode(b"fixture")))
+            })
+            .collect::<Vec<_>>();
+        let index = Some(BASE64_STANDARD.encode(serde_json::to_vec(&current.index).unwrap()));
+        let empty = Some(BASE64_STANDARD.encode(b"[]"));
+        files.push(FileChange {
+            path: NETWORK_CERT_INDEX.into(),
+            before: if reverse {
+                empty.clone()
+            } else {
+                index.clone()
+            },
+            after: if reverse { index } else { empty },
+            original_metadata: None,
+            applied_metadata: None,
+        });
+        let journal = Journal {
+            directories: Vec::new(),
+            completed: false,
+            files,
+            rows: current
+                .rows
+                .iter()
+                .map(|row| RowChange {
+                    table: "cert".into(),
+                    id: row["id"].as_i64().unwrap(),
+                    before: if reverse { None } else { Some(row.clone()) },
+                    after: if reverse { Some(row.clone()) } else { None },
+                })
+                .collect(),
+            registry: change("registry".into(), BASE64_STANDARD.encode(b"{}")),
+        };
+        (journal, current)
+    }
+
+    #[test]
+    fn batch_removals_do_not_mistake_independent_targets_for_shared_files() {
+        for reverse in [false, true] {
+            let (journal, mut current) = batch_removal_fixture(reverse);
+            // Includes legacy journals lacking the new permission fields.
+            let mut legacy = serde_json::to_value(&journal).unwrap();
+            legacy.as_object_mut().unwrap().remove("directories");
+            for file in legacy["files"].as_array_mut().unwrap() {
+                file.as_object_mut().unwrap().remove("applied_metadata");
+            }
+            let journal: Journal = serde_json::from_value(legacy).unwrap();
+            ensure_removals_unreferenced(&journal, &current, reverse).unwrap();
+            // Retry at the file boundary after the row/index changes committed.
+            current.rows.clear();
+            current.index.clear();
+            ensure_removals_unreferenced(&journal, &current, reverse).unwrap();
+        }
+    }
+
+    #[test]
+    fn batch_removals_still_reject_shared_files_and_live_references() {
+        for reverse in [false, true] {
+            let (journal, current) = batch_removal_fixture(reverse);
+            for path in [
+                "/cert",
+                "/key",
+                "/fullchain",
+                "/second-cert",
+                "/second-key",
+                "/second-fullchain",
+            ] {
+                let mut shared = current.clone();
+                shared.rows.push(json!({"id":10,"certificate":path}));
+                assert!(
+                    ensure_removals_unreferenced(&journal, &shared, reverse).is_err(),
+                    "{path}"
+                );
+                let mut bound = current.clone();
+                bound.rows.clear();
+                bound.index.clear();
+                bound
+                    .gateway
+                    .push(json!({"host":"late.example.test","cert":path}));
+                assert!(
+                    ensure_removals_unreferenced(&journal, &bound, reverse).is_err(),
+                    "{path}"
+                );
+            }
+            // A second transaction target really sharing a file must still block removal.
+            let mut shared = current.clone();
+            shared.rows[1]["issuer_certificate"] = json!("/key");
+            assert!(ensure_removals_unreferenced(&journal, &shared, reverse).is_err());
+            let mut bound = current;
+            bound
+                .used
+                .push(json!({"cert_id":9,"service_name":"fixture"}));
+            assert!(ensure_removals_unreferenced(&journal, &bound, reverse).is_err());
+        }
+    }
+
+    #[test]
+    fn removal_guard_preserves_index_only_file_references() {
+        for reverse in [true, false] {
+            let (journal, current) = batch_removal_fixture(reverse);
+            for key in ["certificate", "privateKey", "fullchain"] {
+                let mut shared = current.clone();
+                let mut entry = shared.index[0].clone();
+                entry["certificate"] = json!("/external-cert");
+                entry["privateKey"] = json!("/external-key");
+                entry["fullchain"] = json!("/external-fullchain");
+                // No corresponding database row: index references must stand on their own.
+                entry[key] = json!("/key");
+                shared.index.push(entry);
+                assert!(
+                    ensure_removals_unreferenced(&journal, &shared, reverse).is_err(),
+                    "missed index {key} reference during reverse={reverse}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn removal_guard_protects_shared_index_even_when_files_are_retained() {
+        for reverse in [true, false] {
+            let (mut journal, mut current) = batch_removal_fixture(reverse);
+            journal.files.retain(|file| file.path == NETWORK_CERT_INDEX);
+            let mut shared = current.rows[0].clone();
+            shared["id"] = json!(10);
+            current.rows.push(shared);
+            assert!(ensure_removals_unreferenced(&journal, &current, reverse).is_err());
+        }
+    }
+
+    #[test]
+    fn removal_guard_allows_retained_shared_files() {
+        for reverse in [true, false] {
+            let (mut journal, mut current) = batch_removal_fixture(reverse);
+            journal.files.retain(|file| file.path != "/key");
+            current
+                .rows
+                .push(json!({"id":10,"certificate":"/external-cert","private_key":"/key"}));
+            current
+                .index
+                .push(json!({"certificate":"/external-cert","privateKey":"/key","fullchain":""}));
+            ensure_removals_unreferenced(&journal, &current, reverse).unwrap();
+        }
+    }
+
     #[test]
     fn deletion_rechecks_removed_fullchain_paths_and_new_shared_files() {
         let (mut current, _) = fixture();
@@ -2374,17 +2558,50 @@ fn ensure_removals_unreferenced(
         {
             bail!("Certificate acquired a service or gateway reference; deletion stopped")
         }
+        // The index is also an independent consumer of keys and chains; entries
+        // can exist without a matching cert row (including during fnOS updates).
+        for entry in current
+            .index
+            .iter()
+            .filter(|entry| entry["certificate"] != row["certificate"])
+        {
+            if let Some(path) = index_file_paths(entry)
+                .find(|path| paths.contains(*path) && deleted_files.contains(*path))
+            {
+                bail!(
+                    "Certificate file {path} is referenced by another fnOS index entry; deletion stopped"
+                )
+            }
+        }
+        // Removing this target also removes its index entry. Even retained files
+        // cannot make that safe when a surviving row shares the certificate path.
         if current
             .rows
             .iter()
-            .filter(|r| r["id"] != row["id"])
-            .any(|other| {
-                file_paths(other, &current.index)
-                    .iter()
-                    .any(|path| deleted_files.contains(path.as_str()))
-            })
+            .any(|other| other["id"] != row["id"] && other["certificate"] == row["certificate"])
         {
-            bail!("Certificate files became shared; deletion stopped")
+            bail!("Certificate index entry is shared with another certificate; deletion stopped")
+        }
+        // Only this target's removed paths can be shared with another row. Using
+        // the entire batch here mistakes every other target's own files for a
+        // conflict, preventing recovery of journals that created multiple certs.
+        let shared = current
+            .rows
+            .iter()
+            .filter(|r| r["id"] != row["id"])
+            .find_map(|other| {
+                file_paths(other, &current.index)
+                    .into_iter()
+                    .find(|path| paths.contains(path) && deleted_files.contains(path.as_str()))
+                    .map(|path| (other, path))
+            });
+        if let Some((other, path)) = shared {
+            bail!(
+                "Certificate files became shared; deletion stopped: certificate {} shares {} with certificate {}",
+                row["id"],
+                path,
+                other["id"]
+            )
         }
     }
     Ok(())

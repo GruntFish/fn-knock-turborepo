@@ -305,6 +305,118 @@ mod tests {
             backend,
         )
     }
+    // Exercise the actual removal guard with multiple rows and index entries,
+    // rather than the single-target reference flag used by the other fault tests.
+    struct BatchFake {
+        inner: Fake,
+        snapshot: Snapshot,
+    }
+    impl Backend for BatchFake {
+        fn guard(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
+            self.inner.guard(journal, reverse)?;
+            ensure_removals_unreferenced(journal, &self.snapshot, reverse)
+        }
+        fn directories(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
+            self.inner.directories(journal, reverse)
+        }
+        fn verify_restore(&mut self, journal: &Journal) -> anyhow::Result<()> {
+            self.inner.verify_restore(journal)?;
+            for row in &journal.rows {
+                anyhow::ensure!(
+                    self.snapshot.rows.iter().find(|r| r["id"] == row.id) == row.before.as_ref(),
+                    "Batch row was not restored"
+                );
+            }
+            for file in journal
+                .files
+                .iter()
+                .chain(std::iter::once(&journal.registry))
+            {
+                anyhow::ensure!(
+                    self.inner.files[&file.path] == file.before,
+                    "Batch file was not restored"
+                );
+            }
+            Ok(())
+        }
+        fn check(&mut self, file: &FileChange) -> anyhow::Result<()> {
+            self.inner.check(file)
+        }
+        fn file(&mut self, file: &FileChange, reverse: bool) -> anyhow::Result<()> {
+            self.inner.file(file, reverse)?;
+            if file.path == NETWORK_CERT_INDEX {
+                let contents = self.inner.files[&file.path].as_ref().unwrap();
+                self.snapshot.index = serde_json::from_slice(&BASE64_STANDARD.decode(contents)?)?;
+            }
+            Ok(())
+        }
+        fn rows(&mut self, rows: &[RowChange], reverse: bool) -> anyhow::Result<()> {
+            self.inner.checkpoint("database")?;
+            let mut updated = self.snapshot.rows.clone();
+            for change in rows {
+                let current = updated.iter().find(|row| row["id"] == change.id);
+                anyhow::ensure!(
+                    current == change.before.as_ref()
+                        || reverse && current == change.after.as_ref(),
+                    "External batch row change"
+                );
+                updated.retain(|row| row["id"] != change.id);
+                if let Some(row) = if reverse {
+                    &change.before
+                } else {
+                    &change.after
+                } {
+                    updated.push(row.clone());
+                }
+            }
+            self.snapshot.rows = updated;
+            Ok(())
+        }
+        fn refresh(&mut self) -> anyhow::Result<()> {
+            self.inner.refresh()
+        }
+        fn verify(&mut self, journal: &Journal) -> anyhow::Result<()> {
+            self.inner.verify(journal)
+        }
+    }
+
+    #[test]
+    fn batch_creation_recovers_with_real_reference_guards_after_each_failure_stage() {
+        for phase in ["database", "index", "refresh", "verify"] {
+            for recovery_phase in ["database", "file", "index", "refresh", "restore_verify"] {
+                let (mut journal, mut snapshot) = super::super::tests::batch_removal_fixture(true);
+                // Production paths sort the network index before certificate files.
+                journal.files.rotate_right(1);
+                snapshot.rows.clear();
+                snapshot.index.clear();
+                let (_, mut inner) = fixture("create");
+                inner.files = journal
+                    .files
+                    .iter()
+                    .chain(std::iter::once(&journal.registry))
+                    .map(|file| (file.path.clone(), file.before.clone()))
+                    .collect();
+                inner.fail = Some(phase);
+                let before = inner.files.clone();
+                let mut backend = BatchFake { inner, snapshot };
+                assert!(apply(&journal, &mut backend).is_err(), "{phase}");
+                backend.inner.fail = Some(recovery_phase);
+                assert!(
+                    restore(&journal, &mut backend).is_err(),
+                    "{phase}/{recovery_phase}"
+                );
+                restore(&journal, &mut backend).unwrap();
+                restore(&journal, &mut backend).unwrap();
+                assert!(backend.snapshot.rows.is_empty(), "{phase}/{recovery_phase}");
+                assert!(
+                    backend.snapshot.index.is_empty(),
+                    "{phase}/{recovery_phase}"
+                );
+                assert_eq!(backend.inner.files, before, "{phase}/{recovery_phase}");
+            }
+        }
+    }
+
     #[test]
     fn external_file_edits_fail_before_directory_database_or_service_changes() {
         for kind in ["create", "update", "delete"] {
