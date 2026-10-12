@@ -348,46 +348,31 @@ Function FnKnockWriteTransactionScript
   FileWriteUTF16LE $R7 "}$\r$\n"
   FileWriteUTF16LE $R7 "$\r$\n"
   FileWriteUTF16LE $R7 "function Bootstrap-FnKnockDataTreeAccess([string]$$Path, [string]$$Takeown, [string]$$Icacls, [string]$$ServiceGrant) {$\r$\n"
-  ; takeown's recursive no-follow switch is not documented and is absent on
-  ; otherwise supported Windows 10 builds. Claim only the already validated
-  ; root with portable takeown syntax. Every recursive operation is delegated
-  ; to documented icacls /L, which operates on links rather than their targets.
+  ; Repair each validated ordinary entry before enumerating its children.
+  ; Recursive ownership repair cannot descend into a SYSTEM-only directory
+  ; until its DACL is repaired. Never use recursive takeown (which follows
+  ; links), and keep the live service SID during upgrade preflight.
   FileWriteUTF16LE $R7 "  $$rootAttributes = [IO.File]::GetAttributes($$Path)$\r$\n"
   FileWriteUTF16LE $R7 "  if (($$rootAttributes -band [IO.FileAttributes]::Directory) -eq 0 -or ($$rootAttributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('refusing an untrusted ProgramData root: ' + $$Path) }$\r$\n"
-  FileWriteUTF16LE $R7 "  $$rootTakeownArgs = @('/F', $$Path, '/A')$\r$\n"
-  FileWriteUTF16LE $R7 "  & $$Takeown @rootTakeownArgs | Out-Null$\r$\n"
-  FileWriteUTF16LE $R7 "  $$rootTakeownExitCode = $$LASTEXITCODE$\r$\n"
-  FileWriteUTF16LE $R7 "  if ($$rootTakeownExitCode -ne 0) { throw ('unable to take ownership of the ProgramData\FnKnock root; takeown exited with code ' + $$rootTakeownExitCode) }$\r$\n"
-  ; Neutralize a stale explicit deny on the now-owned root, then make it
-  ; traversable before the recursive owner repair. Keep the live service SID
-  ; while begin runs so a failed preflight does not strand the existing runtime
-  ; without its normal ProgramData access.
-  FileWriteUTF16LE $R7 "  & $$Icacls $$Path /reset /L /Q | Out-Null$\r$\n"
-  FileWriteUTF16LE $R7 "  $$rootResetExitCode = $$LASTEXITCODE$\r$\n"
-  FileWriteUTF16LE $R7 "  if ($$rootResetExitCode -ne 0) { throw ('unable to reset the ProgramData\FnKnock root ACL; icacls exited with code ' + $$rootResetExitCode) }$\r$\n"
-  FileWriteUTF16LE $R7 "  $$rootGrantArgs = @($$Path, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')$\r$\n"
-  FileWriteUTF16LE $R7 "  if (-not [string]::IsNullOrWhiteSpace($$ServiceGrant)) { $$rootGrantArgs += $$ServiceGrant }$\r$\n"
-  FileWriteUTF16LE $R7 "  $$rootGrantArgs += @('/L', '/Q')$\r$\n"
-  FileWriteUTF16LE $R7 "  & $$Icacls @rootGrantArgs | Out-Null$\r$\n"
-  FileWriteUTF16LE $R7 "  $$rootGrantExitCode = $$LASTEXITCODE$\r$\n"
-  FileWriteUTF16LE $R7 "  if ($$rootGrantExitCode -ne 0) { throw ('unable to grant bootstrap access to the ProgramData\FnKnock root; icacls exited with code ' + $$rootGrantExitCode) }$\r$\n"
-  FileWriteUTF16LE $R7 "  $$ownerArgs = @($$Path, '/setowner', '*S-1-5-32-544', '/T', '/L', '/Q')$\r$\n"
-  FileWriteUTF16LE $R7 "  & $$Icacls @ownerArgs | Out-Null$\r$\n"
-  FileWriteUTF16LE $R7 "  $$ownerExitCode = $$LASTEXITCODE$\r$\n"
-  FileWriteUTF16LE $R7 "  if ($$ownerExitCode -ne 0) { throw ('unable to repair ProgramData\FnKnock ownership; icacls exited with code ' + $$ownerExitCode) }$\r$\n"
-  ; Ownership alone does not neutralize an explicit deny ACE left by an old or
-  ; interrupted install. Reset the complete DACL before applying the allowlist.
-  ; Do not use /C: a skipped child would fail later with an opaque .NET
-  ; SetAccessControl UnauthorizedAccessException.
-  FileWriteUTF16LE $R7 "  & $$Icacls $$Path /reset /T /L /Q | Out-Null$\r$\n"
-  FileWriteUTF16LE $R7 "  $$resetExitCode = $$LASTEXITCODE$\r$\n"
-  FileWriteUTF16LE $R7 "  if ($$resetExitCode -ne 0) { throw ('unable to reset ProgramData\FnKnock ACLs; icacls exited with code ' + $$resetExitCode) }$\r$\n"
-  FileWriteUTF16LE $R7 "  $$grantArgs = @($$Path, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')$\r$\n"
-  FileWriteUTF16LE $R7 "  if (-not [string]::IsNullOrWhiteSpace($$ServiceGrant)) { $$grantArgs += $$ServiceGrant }$\r$\n"
-  FileWriteUTF16LE $R7 "  $$grantArgs += @('/T', '/L', '/Q')$\r$\n"
-  FileWriteUTF16LE $R7 "  & $$Icacls @grantArgs | Out-Null$\r$\n"
-  FileWriteUTF16LE $R7 "  $$grantExitCode = $$LASTEXITCODE$\r$\n"
-  FileWriteUTF16LE $R7 "  if ($$grantExitCode -ne 0) { throw ('unable to grant bootstrap access to ProgramData\FnKnock; icacls exited with code ' + $$grantExitCode) }$\r$\n"
+  FileWriteUTF16LE $R7 "  $$queue = [System.Collections.Generic.Queue[string]]::new(); $$queue.Enqueue([IO.Path]::GetFullPath($$Path))$\r$\n"
+  FileWriteUTF16LE $R7 "  while ($$queue.Count -gt 0) {$\r$\n"
+  FileWriteUTF16LE $R7 "    $$entry = $$queue.Dequeue()$\r$\n"
+  FileWriteUTF16LE $R7 "    $$attributes = [IO.File]::GetAttributes($$entry)$\r$\n"
+  FileWriteUTF16LE $R7 "    if (($$attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('refusing a reparse point during ProgramData access repair: ' + $$entry) }$\r$\n"
+  FileWriteUTF16LE $R7 "    $$takeownArgs = @('/F', $$entry, '/A')$\r$\n"
+  FileWriteUTF16LE $R7 "    & $$Takeown @takeownArgs | Out-Null$\r$\n"
+  FileWriteUTF16LE $R7 "    if ($$LASTEXITCODE -ne 0) { throw ('unable to take ownership of ProgramData entry: ' + $$entry) }$\r$\n"
+  FileWriteUTF16LE $R7 "    & $$Icacls $$entry /reset /L /Q | Out-Null$\r$\n"
+  FileWriteUTF16LE $R7 "    if ($$LASTEXITCODE -ne 0) { throw ('unable to reset the ProgramData entry ACL: ' + $$entry) }$\r$\n"
+  FileWriteUTF16LE $R7 "    $$grantArgs = @($$entry, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')$\r$\n"
+  FileWriteUTF16LE $R7 "    if (-not [string]::IsNullOrWhiteSpace($$ServiceGrant)) { $$grantArgs += $$ServiceGrant }$\r$\n"
+  FileWriteUTF16LE $R7 "    $$grantArgs += @('/L', '/Q')$\r$\n"
+  FileWriteUTF16LE $R7 "    & $$Icacls @grantArgs | Out-Null$\r$\n"
+  FileWriteUTF16LE $R7 "    if ($$LASTEXITCODE -ne 0) { throw ('unable to grant bootstrap access to ProgramData entry: ' + $$entry) }$\r$\n"
+  FileWriteUTF16LE $R7 "    if (($$attributes -band [IO.FileAttributes]::Directory) -ne 0) {$\r$\n"
+  FileWriteUTF16LE $R7 "      foreach ($$child in [IO.Directory]::EnumerateFileSystemEntries($$entry)) { $$queue.Enqueue($$child) }$\r$\n"
+  FileWriteUTF16LE $R7 "    }$\r$\n"
+  FileWriteUTF16LE $R7 "  }$\r$\n"
   FileWriteUTF16LE $R7 "}$\r$\n"
   FileWriteUTF16LE $R7 "$\r$\n"
 

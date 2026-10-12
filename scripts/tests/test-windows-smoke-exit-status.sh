@@ -108,12 +108,12 @@ unsafe_native_exit_reads="$(
 if grep -Eq "['\"]/SKIPSL" "${INSTALLER_HOOK}" "${INSTALLER_SMOKE_SCRIPT}"; then
   fail "Windows installer paths must not depend on undocumented takeown /SKIPSL support"
 fi
-grep -Fq "\$\$rootTakeownArgs = @('/F', \$\$Path, '/A')" "${INSTALLER_HOOK}" || \
-  fail "installer bootstrap must limit portable takeown to the validated root"
-grep -Fq '& $$Icacls $$Path /reset /L /Q | Out-Null' "${INSTALLER_HOOK}" || \
-  fail "installer bootstrap must neutralize a stale root deny without recursive link traversal"
-grep -Fq "\$\$ownerArgs = @(\$\$Path, '/setowner', '*S-1-5-32-544', '/T', '/L', '/Q')" "${INSTALLER_HOOK}" || \
-  fail "installer bootstrap must use documented icacls /L for recursive ownership repair"
+grep -Fq "\$\$takeownArgs = @('/F', \$\$entry, '/A')" "${INSTALLER_HOOK}" || \
+  fail "installer bootstrap must limit portable takeown to each validated entry"
+grep -Fq '& $$Icacls $$entry /reset /L /Q | Out-Null' "${INSTALLER_HOOK}" || \
+  fail "installer bootstrap must neutralize stale deny rules without recursive link traversal"
+grep -Fq 'refusing a reparse point during ProgramData access repair:' "${INSTALLER_HOOK}" || \
+  fail "installer bootstrap must reject reparse points before ownership repair"
 grep -Fq '"*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" /L /Q' "${INSTALLER_HOOK}" || \
   fail "installer transaction ACL must grant one inheritable FullControl rule to SYSTEM and Administrators"
 if grep -Fq '"*S-1-5-18:F"' "${INSTALLER_HOOK}" || \

@@ -50,6 +50,35 @@ $fixtureKey = 'Software\FnKnock-transaction-tests-' + [guid]::NewGuid().ToString
 $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
 try {
   [void][IO.Directory]::CreateDirectory($root)
+  # Recover a protected child before enumerating its protected leaf. A single
+  # recursive owner pass fails on this retained SYSTEM-only installation state.
+  $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+  $takeown = Join-Path $env:SystemRoot 'System32\takeown.exe'
+  $aclFixture = Join-Path $root 'restricted'
+  $aclChild = Join-Path $aclFixture 'child'
+  $aclLeaf = Join-Path $aclChild 'retained.txt'
+  [void][IO.Directory]::CreateDirectory($aclChild)
+  [IO.File]::WriteAllText($aclLeaf, 'retained data')
+  & $icacls $aclFixture /setowner '*S-1-5-18' /T /L /Q | Out-Host
+  Assert ($LASTEXITCODE -eq 0) 'Could not set fixture SYSTEM ownership'
+  foreach ($entry in @($aclLeaf, $aclChild, $aclFixture)) {
+    $acl = if ($entry -eq $aclLeaf) { [Security.AccessControl.FileSecurity]::new() } else { [Security.AccessControl.DirectorySecurity]::new() }
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-18'), [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
+    if ($entry -eq $aclLeaf) { [IO.File]::SetAccessControl($entry, $acl) } else { [IO.Directory]::SetAccessControl($entry, $acl) }
+  }
+  Bootstrap-FnKnockDataTreeAccess $aclFixture $takeown $icacls $null
+  Assert ([IO.File]::ReadAllText($aclLeaf) -ceq 'retained data') 'ACL repair lost retained file contents'
+  $outside = Join-Path $root 'outside'
+  [void][IO.Directory]::CreateDirectory($outside)
+  $outsideAcl = [IO.Directory]::GetAccessControl($outside).Sddl
+  $junction = Join-Path $aclFixture 'junction'
+  New-Item -ItemType Junction -Path $junction -Target $outside | Out-Null
+  try {
+    Expect-Failure { Bootstrap-FnKnockDataTreeAccess $aclFixture $takeown $icacls $null }
+    Assert ([IO.Directory]::GetAccessControl($outside).Sddl -ceq $outsideAcl) 'ACL repair followed a junction outside its root'
+  } finally { [IO.Directory]::Delete($junction) }
+  Remove-Item -LiteralPath $aclFixture,$outside -Recurse -Force
   $hashFixture = Join-Path $root 'sha256-fixture'
   [IO.File]::WriteAllBytes($hashFixture, [byte[]]@(97, 98, 99))
   Assert ((Get-FnKnockFileSha256 $hashFixture) -ceq 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD') 'File SHA-256 does not match the known abc vector'
