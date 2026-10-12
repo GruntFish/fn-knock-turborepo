@@ -5,7 +5,7 @@
     "author": "kci-lnk",
     "homepage": "https://github.com/kci-lnk/fn-knock-turborepo",
     "description": "fn-knock 官方 fnOS 原生 FPK 应用源。",
-    "updated_at": "2026-10-05T22:25:53Z"
+    "updated_at": "2026-10-12T02:50:29Z"
   },
   "apps": {
     "fn-knock": {
@@ -28,23 +28,23 @@
       "license": "MIT",
       "install_type": "root",
       "service_port": 7999,
-      "icon_url": "https://raw.githubusercontent.com/kci-lnk/fn-knock-turborepo/v2.5.2/apps/fn-knock/ICON_256.PNG",
-      "readme_url": "https://raw.githubusercontent.com/kci-lnk/fn-knock-turborepo/v2.5.2/README.md",
-      "updated_at": "2026-10-05T22:25:53Z",
+      "icon_url": "https://raw.githubusercontent.com/kci-lnk/fn-knock-turborepo/v2.5.3/apps/fn-knock/ICON_256.PNG",
+      "readme_url": "https://raw.githubusercontent.com/kci-lnk/fn-knock-turborepo/v2.5.3/README.md",
+      "updated_at": "2026-10-12T02:50:29Z",
       "releases": {
-        "2.5.2": {
-          "changelog": "# fn-knock 2.5.2\n\n- 管理后台桌面侧栏支持折叠，并保存折叠状态，刷新页面后仍可沿用设置。\n- 网关导航新增「智能判断局域网环境」选项，可根据访客来源自动选择局域网直连地址或公网访问地址；该选项默认关闭。\n- 修复仅获授权访问单个服务时，因登录入口与服务域名的 Cookie 作用域不同而无法正常进入服务的问题，并完善登录跳转及旧 Cookie 清理。\n- 登录表单支持浏览器和密码管理器自动填充账号、密码，改善密码登录与 LDAP 登录体验。\n- 优化 macOS 终端系统指标采集，减少无关统计开销，改善 CPU 指标采集超时的问题。\n- 移除旧版 Redis 自动迁移逻辑，避免历史 Redis 数据覆盖现有 SQLite 配置与数据。\n- 新增 Moo 应用源支持，稳定版发布后自动更新完整版 FPK 的版本、下载地址、校验信息和更新日志，方便通过 Moo 获取与更新应用。\n",
-          "updated_at": "2026-10-05T22:25:53Z",
+        "2.5.3": {
+          "changelog": "# fn-knock 2.5.3\n\n- 请求日志支持按日期范围查询（最多 30 天），可按访问时间正序或倒序排列，并支持从日志中将 IP 加入黑名单，方便定位和处理异常访问。\n- 优化请求日志的按 IP 聚合视图，统一时间显示，支持查看指定 IP 在所选日期范围内的请求。\n- 系统设置->网关新增「禁用域名后行为」设置，可选择显示阻止页面或直接阻断连接；该设置仅影响手动禁用的子域名，不改变非允许访问时段的提示。\n- 优化网页终端的输入队列、光标与画面渲染，减少连续输入时的积压和显示延迟，并共享资源轮询以减少重复请求。\n- 修复运行健康监测可能停滞的问题，完善异常事件的持久化与保留，便于排查运行故障。\n- Windows 版证书客户端升级至 v0.1.2，新增西部数码 DNS 验证支持。\n- 加强 Windows 安装与升级的数据快照校验和回滚保护；恢复失败时保留恢复快照，降低安装异常时的数据丢失风险。\n- Windows 版新增存储离线诊断命令，完善服务启动错误与安装日志；对不可重试的存储错误停止自动恢复，其他连续故障最多自动重启三次，避免无限重启。\n- 完善 Windows 安装恢复、存储诊断及真实安装包的自动化发布检查。\n- 修复 fnOS 证书同步时的文件权限保留问题，完善失败恢复和错误诊断，避免同步后证书无法被相关服务读取。\n",
+          "updated_at": "2026-10-12T02:50:29Z",
           "packages": {
             "x86": {
-              "download_url": "https://github.com/kci-lnk/fn-knock-turborepo/releases/download/v2.5.2/fn-knock-2.5.2-fnos-amd64.fpk",
-              "sha256": "abe28f9679dfe96c25024d08d1be2cfa2c9adf00ccfda007e7b47ace2ea14076",
-              "size": 30392875
+              "download_url": "https://github.com/kci-lnk/fn-knock-turborepo/releases/download/v2.5.3/fn-knock-2.5.3-fnos-amd64.fpk",
+              "sha256": "6e991114ac80dd5a6f656b4b2e378d14f6b4ef4e7c97ccb6bab151abb1d199a9",
+              "size": 30446358
             },
             "arm": {
-              "download_url": "https://github.com/kci-lnk/fn-knock-turborepo/releases/download/v2.5.2/fn-knock-2.5.2-fnos-arm64.fpk",
-              "sha256": "b4ca6377ce336ce1d7f69c0c7e518e40faaa2ed0748f77fbb1f94153f83f868f",
-              "size": 29315324
+              "download_url": "https://github.com/kci-lnk/fn-knock-turborepo/releases/download/v2.5.3/fn-knock-2.5.3-fnos-arm64.fpk",
+              "sha256": "6c98b9c7e163461d03ee7964539b80c880f83dede6936cd7401883c3b41c77c5",
+              "size": 29364600
             }
           }
         }
