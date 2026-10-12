@@ -650,11 +650,19 @@ function Add-RestrictedProgramDataFixture {
     "/setowner", "*S-1-5-18",
     "/T", "/L", "/Q"
   )
+  # Restrict the leaf first. Recursing after locking the SYSTEM-owned parent
+  # removes our ability to enumerate the child before its ACL can be changed.
+  Invoke-NativeChecked -FilePath "$env:SystemRoot\System32\icacls.exe" -Arguments @(
+    (Join-Path $fixture "system-owned.txt"),
+    "/inheritance:r",
+    "/grant:r", "*S-1-5-18:F",
+    "/L", "/Q"
+  )
   Invoke-NativeChecked -FilePath "$env:SystemRoot\System32\icacls.exe" -Arguments @(
     $fixture,
     "/inheritance:r",
     "/grant:r", "*S-1-5-18:(OI)(CI)F",
-    "/T", "/L", "/Q"
+    "/L", "/Q"
   )
   Write-Host "Prepared a SYSTEM-only ProgramData ACL regression fixture"
 }
