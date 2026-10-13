@@ -12,7 +12,13 @@ impl std::error::Error for BeforeMutation {}
 
 /// Shared ordering for live mutations and deterministic failure-injection tests.
 pub(super) trait Backend {
-    fn guard(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()>;
+    fn guard(
+        &mut self,
+        journal: &Journal,
+        reverse: bool,
+        allow_derived_gateway: bool,
+    ) -> anyhow::Result<()>;
+    fn gateway(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()>;
     fn directories(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()>;
     fn verify_restore(&mut self, journal: &Journal) -> anyhow::Result<()>;
     fn check(&mut self, file: &FileChange) -> anyhow::Result<()>;
@@ -28,10 +34,19 @@ pub(super) struct Native<'a> {
     pub https_port: Option<u16>,
 }
 impl Backend for Native<'_> {
+    fn gateway(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
+        gateway::reconcile(journal, reverse, self.data_dir)
+    }
+
     fn directories(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
         permissions::apply_directories(journal, reverse, self.data_dir)
     }
-    fn guard(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
+    fn guard(
+        &mut self,
+        journal: &Journal,
+        reverse: bool,
+        allow_derived_gateway: bool,
+    ) -> anyhow::Result<()> {
         if !reverse {
             tls_probe::verify_configured_port(
                 self.https_port
@@ -42,7 +57,15 @@ impl Backend for Native<'_> {
         let current = snapshot(self.data_dir)?;
         // Old journals must not be restored into a different supported layout.
         current.schema.verify_changes(&journal.rows)?;
-        ensure_removals_unreferenced(journal, &current, reverse)
+        check_removals(journal, &current, reverse, allow_derived_gateway)?;
+        if allow_derived_gateway
+            && gateway::live_plan(journal, &current, reverse, self.data_dir)? != current.gateway
+        {
+            // Detect unsafe gateway writes before rows or certificate files change.
+            validate_write_location(Path::new(NETWORK_GATEWAY_INDEX), self.data_dir)?;
+            permissions::check_path_access_rules(Path::new(NETWORK_GATEWAY_INDEX))?;
+        }
+        Ok(())
     }
     fn verify_restore(&mut self, journal: &Journal) -> anyhow::Result<()> {
         verify_restored(journal, self.data_dir)
@@ -78,7 +101,7 @@ impl Backend for Native<'_> {
 }
 pub(super) fn apply(journal: &Journal, backend: &mut impl Backend) -> anyhow::Result<()> {
     let preflight = (|| {
-        backend.guard(journal, false)?;
+        backend.guard(journal, false, true)?;
         for file in journal
             .files
             .iter()
@@ -97,7 +120,7 @@ pub(super) fn apply(journal: &Journal, backend: &mut impl Backend) -> anyhow::Re
     {
         backend.file(file, false)?;
     }
-    backend.guard(journal, false)?;
+    backend.guard(journal, false, true)?;
     backend.rows(&journal.rows, false)?;
     for file in journal
         .files
@@ -106,9 +129,10 @@ pub(super) fn apply(journal: &Journal, backend: &mut impl Backend) -> anyhow::Re
     {
         backend.file(file, false)?;
     }
+    backend.gateway(journal, false)?;
     backend.refresh()?;
     for file in journal.files.iter().filter(|f| f.after.is_none()) {
-        backend.guard(journal, false)?;
+        backend.guard(journal, false, false)?;
         backend.file(file, false)?;
     }
     backend.verify(journal)?;
@@ -116,7 +140,7 @@ pub(super) fn apply(journal: &Journal, backend: &mut impl Backend) -> anyhow::Re
     Ok(())
 }
 pub(super) fn restore(journal: &Journal, backend: &mut impl Backend) -> anyhow::Result<()> {
-    backend.guard(journal, true)?;
+    backend.guard(journal, true, true)?;
     for file in journal
         .files
         .iter()
@@ -125,17 +149,37 @@ pub(super) fn restore(journal: &Journal, backend: &mut impl Backend) -> anyhow::
         backend.check(file)?;
     }
     backend.rows(&journal.rows, true)?;
-    for file in journal.files.iter().rev() {
-        if file.before.is_none() {
-            backend.guard(journal, true)?;
-        }
+    // Restore all retained files before publishing the restored index. New files
+    // stay intact until fnOS has regenerated its SNI map without those certificates.
+    for file in journal
+        .files
+        .iter()
+        .filter(|f| f.path != NETWORK_CERT_INDEX && f.before.is_some())
+    {
+        backend.file(file, true)?;
+    }
+    for file in journal
+        .files
+        .iter()
+        .filter(|f| f.path == NETWORK_CERT_INDEX)
+    {
+        backend.file(file, true)?;
+    }
+    backend.gateway(journal, true)?;
+    backend
+        .refresh()
+        .context("Restart fnOS services during recovery")?;
+    backend.guard(journal, true, false)?;
+    for file in journal
+        .files
+        .iter()
+        .filter(|f| f.path != NETWORK_CERT_INDEX && f.before.is_none())
+    {
+        backend.guard(journal, true, false)?;
         backend.file(file, true)?;
     }
     backend.file(&journal.registry, true)?;
     backend.directories(journal, true)?;
-    backend
-        .refresh()
-        .context("Restart fnOS services during recovery")?;
     backend
         .verify_restore(journal)
         .context("Verify restored fnOS certificates")
@@ -164,12 +208,21 @@ mod tests {
         }
     }
     impl Backend for Fake {
+        fn gateway(&mut self, _journal: &Journal, _reverse: bool) -> anyhow::Result<()> {
+            self.checkpoint("gateway")
+        }
         fn directories(&mut self, _journal: &Journal, _reverse: bool) -> anyhow::Result<()> {
             self.checkpoint("permissions")?;
             self.permission_writes += 1;
             Ok(())
         }
-        fn guard(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
+        fn guard(
+            &mut self,
+            journal: &Journal,
+            reverse: bool,
+            allow_derived_gateway: bool,
+        ) -> anyhow::Result<()> {
+            let _ = allow_derived_gateway;
             self.guards += 1;
             if self.guards == 2 {
                 self.checkpoint("second_guard")?;
@@ -291,6 +344,7 @@ mod tests {
         };
         (
             Journal {
+                gateway_before: None,
                 directories: Vec::new(),
                 completed: false,
                 files,
@@ -310,11 +364,22 @@ mod tests {
     struct BatchFake {
         inner: Fake,
         snapshot: Snapshot,
+        regenerate_mapping: Option<Value>,
     }
     impl Backend for BatchFake {
-        fn guard(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
-            self.inner.guard(journal, reverse)?;
-            ensure_removals_unreferenced(journal, &self.snapshot, reverse)
+        fn gateway(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
+            self.inner.checkpoint("gateway")?;
+            self.snapshot.gateway = gateway::reconciled(journal, &self.snapshot, reverse)?;
+            Ok(())
+        }
+        fn guard(
+            &mut self,
+            journal: &Journal,
+            reverse: bool,
+            allow_derived_gateway: bool,
+        ) -> anyhow::Result<()> {
+            self.inner.guard(journal, reverse, allow_derived_gateway)?;
+            check_removals(journal, &self.snapshot, reverse, allow_derived_gateway)
         }
         fn directories(&mut self, journal: &Journal, reverse: bool) -> anyhow::Result<()> {
             self.inner.directories(journal, reverse)
@@ -373,7 +438,11 @@ mod tests {
             Ok(())
         }
         fn refresh(&mut self) -> anyhow::Result<()> {
-            self.inner.refresh()
+            self.inner.refresh()?;
+            if let Some(mapping) = &self.regenerate_mapping {
+                self.snapshot.gateway = vec![mapping.clone()];
+            }
+            Ok(())
         }
         fn verify(&mut self, journal: &Journal) -> anyhow::Result<()> {
             self.inner.verify(journal)
@@ -381,9 +450,84 @@ mod tests {
     }
 
     #[test]
+    fn generated_gateway_recovery_never_unlinks_before_refresh_and_reference_checks() {
+        for failure in ["gateway", "refresh", "stale_mapping", "external_mapping"] {
+            let (mut snapshot, mapping) = gateway::tests::fixture();
+            let (mut journal, _) = super::super::tests::batch_removal_fixture(true);
+            journal.rows.truncate(1);
+            journal.rows[0].after = Some(snapshot.rows[0].clone());
+            journal.gateway_before = Some(vec![]);
+            journal.files.retain(|f| f.path == NETWORK_CERT_INDEX);
+            journal.files[0].after =
+                Some(BASE64_STANDARD.encode(serde_json::to_vec(&snapshot.index).unwrap()));
+            for path in file_paths(&snapshot.rows[0], &snapshot.index) {
+                journal.files.push(FileChange {
+                    path,
+                    before: None,
+                    after: Some(BASE64_STANDARD.encode(b"new")),
+                    original_metadata: None,
+                    applied_metadata: None,
+                });
+            }
+            snapshot.rows.clear();
+            snapshot.index.clear();
+            snapshot.gateway.clear();
+            let (_, mut inner) = fixture("create");
+            inner.files = journal
+                .files
+                .iter()
+                .chain(std::iter::once(&journal.registry))
+                .map(|file| (file.path.clone(), file.before.clone()))
+                .collect();
+            inner.fail = Some("verify");
+            let mut backend = BatchFake {
+                inner,
+                snapshot,
+                regenerate_mapping: Some(mapping.clone()),
+            };
+            assert!(apply(&journal, &mut backend).is_err());
+            assert_eq!(backend.snapshot.gateway, vec![mapping.clone()]);
+            backend.regenerate_mapping = None;
+            match failure {
+                "stale_mapping" => backend.regenerate_mapping = Some(mapping.clone()),
+                "external_mapping" => {
+                    backend.snapshot.gateway[0]["host"] = json!("external.example.test")
+                }
+                _ => backend.inner.fail = Some(failure),
+            }
+            assert!(restore(&journal, &mut backend).is_err(), "{failure}");
+            for file in journal.files.iter().filter(|f| f.before.is_none()) {
+                assert_eq!(
+                    backend.inner.files[&file.path], file.after,
+                    "{failure}: prematurely removed {}",
+                    file.path
+                );
+            }
+            backend.regenerate_mapping = None;
+            if failure == "external_mapping" {
+                backend.snapshot.gateway = vec![mapping];
+            }
+            restore(&journal, &mut backend).unwrap();
+            restore(&journal, &mut backend).unwrap();
+            assert!(backend.snapshot.gateway.is_empty());
+            assert!(backend.snapshot.rows.is_empty());
+            for file in &journal.files {
+                assert_eq!(backend.inner.files[&file.path], file.before);
+            }
+        }
+    }
+
+    #[test]
     fn batch_creation_recovers_with_real_reference_guards_after_each_failure_stage() {
-        for phase in ["database", "index", "refresh", "verify"] {
-            for recovery_phase in ["database", "file", "index", "refresh", "restore_verify"] {
+        for phase in ["database", "index", "gateway", "refresh", "verify"] {
+            for recovery_phase in [
+                "database",
+                "file",
+                "index",
+                "gateway",
+                "refresh",
+                "restore_verify",
+            ] {
                 let (mut journal, mut snapshot) = super::super::tests::batch_removal_fixture(true);
                 // Production paths sort the network index before certificate files.
                 journal.files.rotate_right(1);
@@ -398,7 +542,11 @@ mod tests {
                     .collect();
                 inner.fail = Some(phase);
                 let before = inner.files.clone();
-                let mut backend = BatchFake { inner, snapshot };
+                let mut backend = BatchFake {
+                    inner,
+                    snapshot,
+                    regenerate_mapping: None,
+                };
                 assert!(apply(&journal, &mut backend).is_err(), "{phase}");
                 backend.inner.fail = Some(recovery_phase);
                 assert!(
@@ -479,6 +627,7 @@ mod tests {
                 "file",
                 "database",
                 "index",
+                "gateway",
                 "refresh",
                 "verify",
             ] {

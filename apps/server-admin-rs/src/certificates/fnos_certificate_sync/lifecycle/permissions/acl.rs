@@ -1,4 +1,4 @@
-use super::{CERT_ROOT, NETWORK_CERT_INDEX};
+use super::{CERT_ROOT, NETWORK_CERT_INDEX, NETWORK_GATEWAY_INDEX};
 #[cfg(target_os = "linux")]
 use anyhow::Context;
 use std::path::Path;
@@ -38,7 +38,10 @@ pub(super) fn reject_extended_acl(_path: &Path) -> anyhow::Result<()> {
 }
 
 pub(in super::super) fn check_path_access_rules(path: &Path) -> anyhow::Result<()> {
-    if !path.starts_with(CERT_ROOT) && path != Path::new(NETWORK_CERT_INDEX) {
+    if !path.starts_with(CERT_ROOT)
+        && path != Path::new(NETWORK_CERT_INDEX)
+        && path != Path::new(NETWORK_GATEWAY_INDEX)
+    {
         return Ok(());
     }
     reject_extended_acl(path)?;

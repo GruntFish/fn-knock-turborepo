@@ -1,6 +1,7 @@
 //! Reconciliation and recoverable fnOS certificate mutations. No writes occur while planning.
 use super::*;
 mod automatic;
+mod gateway;
 mod permissions;
 #[cfg(test)]
 mod postgres_tests;
@@ -113,6 +114,8 @@ struct RowChange {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Journal {
+    #[serde(default)]
+    gateway_before: Option<Vec<Value>>,
     #[serde(default)]
     directories: Vec<permissions::DirectoryChange>,
     completed: bool,
@@ -308,7 +311,11 @@ fn path_md5(path: &str) -> anyhow::Result<String> {
 fn references(snapshot: &Snapshot, row: &Value) -> Vec<String> {
     let paths = file_paths(row, &snapshot.index);
     let mut result = BTreeSet::new();
-    if row["is_default"].as_i64().unwrap_or(0) != 0 {
+    if row["is_default"].as_i64().unwrap_or(0) != 0
+        || snapshot.rows.iter().any(|current| {
+            current["id"] == row["id"] && current["is_default"].as_i64().unwrap_or(0) != 0
+        })
+    {
         result.insert("default certificate".to_string());
     }
     for binding in snapshot
@@ -334,6 +341,7 @@ fn references(snapshot: &Snapshot, row: &Value) -> Vec<String> {
         if ["cert", "key"]
             .iter()
             .any(|key| entry[key].as_str().is_some_and(|path| paths.contains(path)))
+            && !gateway::derived_mapping(entry, row, &snapshot.index)
         {
             result.insert(format!(
                 "gateway: {}",
@@ -742,7 +750,7 @@ fn row_changes_sql(
 }
 // Read-only validation is also used before recovery changes any database rows.
 fn validate_write_location(path: &Path, data_dir: &Path) -> anyhow::Result<()> {
-    if path == Path::new(NETWORK_CERT_INDEX) {
+    if path == Path::new(NETWORK_CERT_INDEX) || path == Path::new(NETWORK_GATEWAY_INDEX) {
         return validate_fixed_regular_file(path);
     }
     let root = if path.starts_with(CERT_ROOT) {
@@ -788,7 +796,7 @@ fn ensure_parent(path: &Path, data_dir: &Path) -> anyhow::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("Missing file parent"))?;
-    if path == Path::new(NETWORK_CERT_INDEX) {
+    if path == Path::new(NETWORK_CERT_INDEX) || path == Path::new(NETWORK_GATEWAY_INDEX) {
         return validate_fixed_regular_file(path);
     }
     let root = if path.starts_with(CERT_ROOT) {
@@ -865,6 +873,22 @@ fn write_content_with_metadata(
     sync_directory(parent)?;
     Ok(())
 }
+fn file_content_matches(path: &str, current: &Option<String>, expected: &Option<String>) -> bool {
+    if current == expected {
+        return true;
+    }
+    if path != NETWORK_CERT_INDEX {
+        return false;
+    }
+    let decode = |value: &Option<String>| -> Option<Vec<Value>> {
+        serde_json::from_slice(&BASE64_STANDARD.decode(value.as_ref()?).ok()?).ok()
+    };
+    match (decode(current), decode(expected)) {
+        (Some(current), Some(expected)) => current == expected,
+        _ => false,
+    }
+}
+
 fn check_file(change: &FileChange, reverse: bool) -> anyhow::Result<()> {
     permissions::check_path_access_rules(Path::new(&change.path))?;
     let current = read_optional(Path::new(&change.path))?;
@@ -881,7 +905,9 @@ fn check_file(change: &FileChange, reverse: bool) -> anyhow::Result<()> {
             )
         }
     }
-    if current != change.before && !(reverse && current == change.after) {
+    if !(file_content_matches(&change.path, &current, &change.before)
+        || reverse && file_content_matches(&change.path, &current, &change.after))
+    {
         bail!(
             "Certificate files changed externally at {}; recovery backup preserved",
             change.path
@@ -902,7 +928,11 @@ fn apply_file(change: &FileChange, reverse: bool, data_dir: &Path) -> anyhow::Re
     } else {
         &change.applied_metadata
     };
-    if read_optional(Path::new(&change.path))? == *expected {
+    if file_content_matches(
+        &change.path,
+        &read_optional(Path::new(&change.path))?,
+        expected,
+    ) {
         if let (Some(value), Some(metadata)) = (expected, desired_metadata)
             && SavedMetadata::read(Path::new(&change.path))? != *metadata
         {
@@ -1330,6 +1360,7 @@ fn prepare(plan: &Plan, selected: &[&Action], data_dir: &Path) -> anyhow::Result
         },
     );
     Ok(Journal {
+        gateway_before: Some(snapshot.gateway.clone()),
         directories: Vec::new(),
         completed: false,
         files: files.into_values().collect(),
@@ -1493,6 +1524,7 @@ fn verify_applied(
     permissions::verify_directories(journal, false)?;
     permissions::verify_access(journal)?;
     let snapshot = snapshot(data_dir)?;
+    ensure_removals_unreferenced(journal, &snapshot, false)?;
     for change in &journal.rows {
         let table = if change.table == "cert" {
             &snapshot.rows
@@ -1923,6 +1955,7 @@ mod tests {
         };
         for i in 0..13 {
             let journal = Journal {
+                gateway_before: None,
                 directories: Vec::new(),
                 completed: i != 0,
                 files: vec![],
@@ -2172,6 +2205,7 @@ mod tests {
             applied_metadata: None,
         });
         let journal = Journal {
+            gateway_before: None,
             directories: Vec::new(),
             completed: false,
             files,
@@ -2305,6 +2339,7 @@ mod tests {
         current.index[0]["fullchain"] = json!("/fullchain");
         let encoded = Some(BASE64_STANDARD.encode(serde_json::to_vec(&current.index).unwrap()));
         let journal = Journal {
+            gateway_before: None,
             directories: Vec::new(),
             completed: false,
             files: vec![
@@ -2513,7 +2548,29 @@ fn ensure_removals_unreferenced(
     current: &Snapshot,
     reverse: bool,
 ) -> anyhow::Result<()> {
+    check_removals(journal, current, reverse, false)
+}
+
+fn check_removals(
+    journal: &Journal,
+    current: &Snapshot,
+    reverse: bool,
+    allow_derived_gateway: bool,
+) -> anyhow::Result<()> {
     let index_change = journal.files.iter().find(|f| f.path == NETWORK_CERT_INDEX);
+    let source_index: Vec<Value> = index_change
+        .and_then(|f| {
+            if reverse {
+                f.after.as_ref()
+            } else {
+                f.before.as_ref()
+            }
+        })
+        .map(|encoded| -> anyhow::Result<_> {
+            Ok(serde_json::from_slice(&BASE64_STANDARD.decode(encoded)?)?)
+        })
+        .transpose()?
+        .unwrap_or_default();
     let mut historical = current.index.clone();
     if let Some(change) = index_change {
         for value in [&change.before, &change.after].into_iter().flatten() {
@@ -2547,16 +2604,31 @@ fn ensure_removals_unreferenced(
             continue;
         };
         let paths = file_paths(row, &historical);
-        if !references(current, row).is_empty()
-            || current.gateway.iter().any(|mapping| {
-                ["cert", "key"].iter().any(|key| {
-                    mapping[key]
-                        .as_str()
-                        .is_some_and(|path| paths.contains(path))
-                })
-            })
-        {
-            bail!("Certificate acquired a service or gateway reference; deletion stopped")
+        // Reference flags always come from live state. Historical index data is
+        // used only to recognize derived mappings after an interrupted DB/index step.
+        let mut without_gateway = current.clone();
+        without_gateway.gateway.clear();
+        let mut blockers = references(&without_gateway, row);
+        for mapping in &current.gateway {
+            if ["cert", "key"].iter().any(|key| {
+                mapping[key]
+                    .as_str()
+                    .is_some_and(|path| paths.contains(path))
+            }) && !(allow_derived_gateway
+                && gateway::derived_mapping(mapping, row, &source_index))
+            {
+                blockers.push(format!(
+                    "gateway: {}",
+                    mapping["host"].as_str().unwrap_or("unknown")
+                ));
+            }
+        }
+        if !blockers.is_empty() {
+            bail!(
+                "Certificate {} acquired a service or gateway reference; deletion stopped: {}",
+                change.id,
+                blockers.join(", ")
+            )
         }
         // The index is also an independent consumer of keys and chains; entries
         // can exist without a matching cert row (including during fnOS updates).
@@ -2609,6 +2681,11 @@ fn ensure_removals_unreferenced(
 fn verify_restored(journal: &Journal, data_dir: &Path) -> anyhow::Result<()> {
     permissions::verify_directories(journal, true)?;
     let current = snapshot(data_dir)?;
+    ensure_removals_unreferenced(journal, &current, true)?;
+    anyhow::ensure!(
+        gateway::live_plan(journal, &current, true, data_dir)? == current.gateway,
+        "Restored fnOS gateway certificate mappings differ from the recovery plan"
+    );
     for change in &journal.rows {
         let rows = if change.table == "cert" {
             &current.rows
@@ -2638,7 +2715,11 @@ fn verify_restored(journal: &Journal, data_dir: &Path) -> anyhow::Result<()> {
                 file.path
             );
         }
-        if read_optional(Path::new(&file.path))? != file.before {
+        if !file_content_matches(
+            &file.path,
+            &read_optional(Path::new(&file.path))?,
+            &file.before,
+        ) {
             bail!("Restored certificate file verification failed")
         }
     }
