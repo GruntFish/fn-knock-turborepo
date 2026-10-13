@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde_json::Value;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use crate::proxy_utils::is_reverse_proxy_subdomain_mode;
 use crate::{i18n::Translator, response, state::AppState};
 
 fn system_info_route_text(translator: &Translator, key: &str) -> String {
@@ -61,8 +62,14 @@ fn resolve_access_entry_info_from_sources(
     frpc_remote_port: Option<u16>,
     local_gateway_port: Option<String>,
 ) -> AccessEntryInfo {
+    // Path links keep the administration hostname, so a remote FRP port would
+    // incorrectly pair a NAS LAN address with a port listening on the FRP server.
     if is_reverse_proxy_subdomain_mode(config)
-        && !is_cloudflared_reverse_proxy_subdomain_mode(config)
+        && config
+            .get("default_tunnel")
+            .and_then(Value::as_str)
+            .unwrap_or("frp")
+            == "frp"
         && let Some(port) = frpc_remote_port
     {
         return AccessEntryInfo {
@@ -72,15 +79,6 @@ fn resolve_access_entry_info_from_sources(
         };
     }
     resolve_local_gateway_port_from_env(local_gateway_port)
-}
-
-fn is_cloudflared_reverse_proxy_subdomain_mode(config: &Value) -> bool {
-    is_reverse_proxy_subdomain_mode(config)
-        && config
-            .get("default_tunnel")
-            .and_then(Value::as_str)
-            .unwrap_or("frp")
-            == "cloudflared"
 }
 
 pub(crate) fn resolve_public_gateway_port(config: &Value) -> Option<i64> {
@@ -128,33 +126,50 @@ fn resolve_local_gateway_port_from_env(value: Option<String>) -> AccessEntryInfo
     }
 }
 
-use crate::proxy_utils::is_reverse_proxy_subdomain_mode;
-
 fn resolve_frpc_remote_port() -> Option<u16> {
     let content = fs::read_to_string(data_dir().join("frp").join("frpc.toml")).ok()?;
-    extract_frpc_remote_port(&content)
+    let local_port = env::var("GO_REPROXY_PORT")
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(7999);
+    extract_frpc_remote_port(&content, local_port)
 }
 
-fn extract_frpc_remote_port(content: &str) -> Option<u16> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if key != "remotePort" && key != "remote_port" {
-            continue;
-        }
-        let value = value.trim();
-        if value.is_empty() || value.chars().any(|ch| !ch.is_ascii_digit()) {
-            continue;
-        }
-        let parsed = value.parse::<u32>().ok()?;
-        if (1..=65535).contains(&parsed) {
-            return Some(parsed as u16);
-        }
-    }
-    None
+fn extract_frpc_remote_port(content: &str, local_port: u16) -> Option<u16> {
+    let document = toml::from_str::<toml::Value>(content).ok()?;
+    let proxies = document.get("proxies")?.as_array()?;
+    let gateway_proxies = proxies.iter().filter(|proxy| {
+        proxy
+            .get("type")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("tcp")
+            == "tcp"
+            && proxy
+                .get("localPort")
+                .or_else(|| proxy.get("local_port"))
+                .and_then(toml::Value::as_integer)
+                == Some(i64::from(local_port))
+    });
+    // Prefer the editor's managed proxy only when it forwards this gateway.
+    // Custom names work too, but ambiguous mappings must not select another app.
+    let proxy = gateway_proxies
+        .clone()
+        .find(|proxy| proxy.get("name").and_then(toml::Value::as_str) == Some("reproxy"))
+        .or_else(|| {
+            let mut candidates = gateway_proxies;
+            let first = candidates.next()?;
+            if candidates.next().is_some() {
+                None
+            } else {
+                Some(first)
+            }
+        })?;
+    let port = proxy
+        .get("remotePort")
+        .or_else(|| proxy.get("remote_port"))?
+        .as_integer()?;
+    u16::try_from(port).ok().filter(|port| *port > 0)
 }
 
 use crate::node_compat::parse_i64_prefix as parse_js_parse_int_radix_10;
@@ -187,11 +202,94 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn extracts_frpc_remote_port_like_node() {
-        assert_eq!(extract_frpc_remote_port("remotePort = 12345"), Some(12345));
-        assert_eq!(extract_frpc_remote_port("remote_port = 443"), Some(443));
-        assert_eq!(extract_frpc_remote_port("remotePort = 70000"), None);
-        assert_eq!(extract_frpc_remote_port("remotePort = 443 # nope"), None);
+    fn extracts_managed_frpc_remote_port_from_toml() {
+        for (value, expected) in [
+            ("remotePort = 27999", Some(27999)),
+            ("remote_port = 443", Some(443)),
+            ("remotePort = 27_999 # public port", Some(27999)),
+            ("remotePort = 70000", None),
+            ("remotePort = 0", None),
+            ("remotePort = -1", None),
+            ("remotePort = 1.5", None),
+            ("remotePort = \"27999\"", None),
+        ] {
+            assert_eq!(
+                extract_frpc_remote_port(&format!("[[proxies]]\nlocalPort = 7999\n{value}"), 7999),
+                expected
+            );
+        }
+        assert_eq!(extract_frpc_remote_port("invalid TOML", 7999), None);
+        assert_eq!(extract_frpc_remote_port("serverPort = 7000", 7999), None);
+        assert_eq!(
+            extract_frpc_remote_port(
+                "[[proxies]]\nname = 'other'\nremotePort = 7999\n\
+             [[proxies]]\nname = 'reproxy'\nlocalPort = 7999\nremotePort = 27999",
+                7999
+            ),
+            Some(27999)
+        );
+    }
+
+    #[test]
+    fn selects_only_tcp_proxies_for_the_current_gateway() {
+        let content = "[[proxies]]\nname = 'ssh'\ntype = 'tcp'\nlocalPort = 22\nremotePort = 22022\n\
+            [[proxies]]\nname = 'custom-gateway'\ntype = 'tcp'\nlocal_port = 17999\nremote_port = 27999";
+        assert_eq!(extract_frpc_remote_port(content, 17999), Some(27999));
+        assert_eq!(extract_frpc_remote_port(content, 7999), None);
+        assert_eq!(
+            extract_frpc_remote_port(
+                "[[proxies]]\nname = 'reproxy'\ntype = 'udp'\nlocalPort = 7999\nremotePort = 27999",
+                7999,
+            ),
+            None
+        );
+        assert_eq!(
+            extract_frpc_remote_port(
+                "[[proxies]]\nname = 'reproxy'\nlocalPort = 22\nremotePort = 22022",
+                7999,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn does_not_guess_between_multiple_gateway_mappings() {
+        let content = "[[proxies]]\nname = 'first'\nlocalPort = 7999\nremotePort = 27999\n\
+            [[proxies]]\nname = 'second'\nlocalPort = 7999\nremotePort = 37999";
+        assert_eq!(extract_frpc_remote_port(content, 7999), None);
+        assert_eq!(
+            extract_frpc_remote_port(&content.replace("'second'", "'reproxy'"), 7999,),
+            Some(37999)
+        );
+    }
+
+    #[test]
+    fn keeps_path_entries_local_and_resolves_frp_host_entries() {
+        for (submode, tunnel, expected_port, expected_env) in [
+            ("path", "frp", "7999", "GO_REPROXY_PORT"),
+            ("path", "cloudflared", "7999", "GO_REPROXY_PORT"),
+            ("subdomain", "frp", "27999", "FRP_REMOTE_PORT"),
+            ("subdomain", "cloudflared", "7999", "GO_REPROXY_PORT"),
+        ] {
+            let config = json!({
+                "run_type": 1,
+                "reverse_proxy_submode": submode,
+                "default_tunnel": tunnel,
+            });
+            let entry = resolve_access_entry_info_from_sources(
+                &config,
+                Some(27999),
+                Some("7999".to_string()),
+            );
+            assert_eq!(entry.port, expected_port);
+            assert_eq!(entry.env, expected_env);
+        }
+        let direct = json!({"run_type": 3, "default_tunnel": "frp"});
+        assert_eq!(
+            resolve_access_entry_info_from_sources(&direct, Some(27999), Some("8443".to_string()),)
+                .port,
+            "8443"
+        );
     }
 
     #[test]

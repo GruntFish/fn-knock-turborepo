@@ -19,7 +19,8 @@ import {
 
 const configStore = useConfigStore();
 const { t } = useI18n();
-const { accessEntryPort, loadAccessEntryPort } = useAccessEntryPort();
+const { accessEntryPort, loadAccessEntryPort, isLoading, hasLoadError } =
+  useAccessEntryPort({ fallbackPort: "" });
 const brokenIcons = ref<Set<string>>(new Set());
 const isDialogOpen = ref(false);
 const dialogTriggerRef = ref<HTMLButtonElement | null>(null);
@@ -43,6 +44,14 @@ const items = computed(() => {
   });
 });
 
+const emptyMessage = computed(() =>
+  isLoading.value
+    ? t("common.loading")
+    : hasLoadError.value
+      ? t("common.loadConfigFailed")
+      : t("admin.consoleApplicationList.empty"),
+);
+
 const markIconBroken = (key: string) => {
   const next = new Set(brokenIcons.value);
   next.add(key);
@@ -57,12 +66,21 @@ const handleDialogCloseAutoFocus = (event: Event) => {
 };
 
 watch(
-  isVisible,
-  (visible) => {
+  [
+    isVisible,
+    () => configStore.config?.run_type,
+    () => configStore.config?.reverse_proxy_submode,
+    () => configStore.config?.default_tunnel,
+  ],
+  ([visible]) => {
     if (visible) void loadAccessEntryPort();
   },
   { immediate: true },
 );
+
+watch(isDialogOpen, (open) => {
+  if (open && hasLoadError.value) void loadAccessEntryPort();
+});
 </script>
 
 <template>
@@ -134,7 +152,7 @@ watch(
     </ul>
 
     <p v-else class="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-      {{ t("admin.consoleApplicationList.empty") }}
+      {{ emptyMessage }}
     </p>
 
     <Dialog v-model:open="isDialogOpen">
@@ -197,9 +215,21 @@ watch(
           </a>
         </div>
 
-        <p v-else class="px-5 py-10 text-center text-sm text-muted-foreground">
-          {{ t("admin.consoleApplicationList.empty") }}
-        </p>
+        <div
+          v-else
+          class="px-5 py-10 text-center text-sm text-muted-foreground"
+          aria-live="polite"
+        >
+          <p>{{ emptyMessage }}</p>
+          <button
+            v-if="hasLoadError"
+            type="button"
+            class="mt-3 rounded px-3 py-2 text-foreground underline focus-visible:outline focus-visible:outline-2"
+            @click="loadAccessEntryPort"
+          >
+            {{ t("common.refreshStatus") }}
+          </button>
+        </div>
       </DialogContent>
     </Dialog>
   </nav>

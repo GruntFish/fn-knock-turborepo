@@ -22,19 +22,19 @@ export const isAnySubdomainRoutingMode = (
 ): boolean => config?.run_type === 3 || isReverseProxySubdomainMode(config);
 
 export const isCloudflaredReverseProxySubdomainMode = (
-  config?:
-    | Pick<AppConfig, "run_type" | "reverse_proxy_submode" | "default_tunnel">
-    | null,
+  config?: Pick<
+    AppConfig,
+    "run_type" | "reverse_proxy_submode" | "default_tunnel"
+  > | null,
 ): boolean =>
-  isReverseProxySubdomainMode(config) && config?.default_tunnel === "cloudflared";
+  isReverseProxySubdomainMode(config) &&
+  config?.default_tunnel === "cloudflared";
 
 export const shouldOmitPublicAccessEntryPort = (
-  config?:
-    | Pick<
-        AppConfig,
-        "run_type" | "reverse_proxy_submode" | "default_tunnel" | "subdomain_mode"
-      >
-    | null,
+  config?: Pick<
+    AppConfig,
+    "run_type" | "reverse_proxy_submode" | "default_tunnel" | "subdomain_mode"
+  > | null,
 ): boolean =>
   isCloudflaredReverseProxySubdomainMode(config) ||
   (config?.run_type === 3 &&
@@ -42,13 +42,31 @@ export const shouldOmitPublicAccessEntryPort = (
     (config.subdomain_mode?.aliyun_esa_enabled === true ||
       config.subdomain_mode?.tencent_edgeone_enabled === true));
 
-const normalizePublicPort = (value: unknown): number | null => {
-  const parsed =
-    typeof value === "number"
-      ? value
-      : Number.parseInt(String(value ?? "").trim(), 10);
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) return null;
-  return Math.floor(parsed);
+// The public service and the administration page may use different protocols
+// (for example, an HTTP fnOS iframe managing an HTTPS FRP ingress).
+export const resolvePublicAccessEntryProtocol = (
+  config: Pick<
+    AppConfig,
+    | "run_type"
+    | "reverse_proxy_submode"
+    | "default_tunnel"
+    | "subdomain_mode"
+    | "ssl"
+  >,
+): "http:" | "https:" =>
+  shouldOmitPublicAccessEntryPort(config) || config.ssl?.enabled === true
+    ? "https:"
+    : "http:";
+
+export const normalizePublicAccessEntryPort = (
+  value: unknown,
+): number | null => {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !/^\+?\d+$/u.test(value.trim())) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535
+    ? parsed
+    : null;
 };
 
 export const parseExplicitPublicUrlPort = (
@@ -67,7 +85,7 @@ export const parseExplicitPublicUrlPort = (
     const authority = raw.match(/^[a-z][a-z\d+.-]*:\/\/([^/\\?#]*)/iu)?.[1];
     const host = authority?.split("@").pop();
     const port = host?.match(/:(\d+)$/u)?.[1];
-    return normalizePublicPort(port);
+    return normalizePublicAccessEntryPort(port);
   } catch {
     return null;
   }
@@ -83,10 +101,12 @@ export const resolveExplicitPublicAccessEntryPort = (
   ) ||
   (scheme === "http"
     ? null
-    : normalizePublicPort(config?.subdomain_mode?.public_https_port)) ||
+    : normalizePublicAccessEntryPort(
+        config?.subdomain_mode?.public_https_port,
+      )) ||
   (scheme === "https"
     ? null
-    : normalizePublicPort(config?.subdomain_mode?.public_http_port));
+    : normalizePublicAccessEntryPort(config?.subdomain_mode?.public_http_port));
 
 export const isCloudflaredTunnelAvailable = (
   config?: Pick<AppConfig, "run_type" | "reverse_proxy_submode"> | null,

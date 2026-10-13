@@ -1,7 +1,9 @@
 import type { AppConfig, DeploymentTarget, HostMapping } from "@/types";
 import {
   isAnySubdomainRoutingMode,
-  parseExplicitPublicUrlPort,
+  normalizePublicAccessEntryPort,
+  resolveExplicitPublicAccessEntryPort,
+  resolvePublicAccessEntryProtocol,
   shouldOmitPublicAccessEntryPort,
 } from "@/lib/reverse-proxy-submode";
 
@@ -19,7 +21,6 @@ export interface ConsoleApplicationLocation {
   protocol: string;
 }
 
-const DEFAULT_GATEWAY_PORT = "7999";
 type GatewayProtocol = "http:" | "https:";
 
 export const isConsoleApplicationListAvailable = (
@@ -36,17 +37,9 @@ export const shouldShowConsoleApplicationList = ({
   isConsoleApplicationListAvailable(deploymentTarget) && enabled === true;
 
 const normalizeGatewayPort = (value: unknown): string | null => {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) return null;
-  if (!/^\d{1,5}$/u.test(normalized)) return null;
-  const parsed = Number(normalized);
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65_535
-    ? String(parsed)
-    : null;
+  const port = normalizePublicAccessEntryPort(value);
+  return port === null ? null : String(port);
 };
-
-const normalizeGatewayProtocol = (value: string): GatewayProtocol =>
-  value === "https:" ? "https:" : "http:";
 
 const isDefaultGatewayPort = (
   protocol: GatewayProtocol,
@@ -55,43 +48,25 @@ const isDefaultGatewayPort = (
   (protocol === "https:" && port === "443") ||
   (protocol === "http:" && port === "80");
 
-const resolvePublicBaseUrlPort = (
-  config: AppConfig,
-  protocol: GatewayProtocol,
-): string | null => {
-  const port = parseExplicitPublicUrlPort(
-    config.subdomain_mode?.public_auth_base_url,
-    protocol === "https:" ? "https" : "http",
-  );
-  return port === null ? null : String(port);
-};
-
-const resolveConfiguredPublicPort = (
-  config: AppConfig,
-  protocol: GatewayProtocol,
-): string | null => {
-  return normalizeGatewayPort(
-    protocol === "https:"
-      ? config.subdomain_mode?.public_https_port
-      : config.subdomain_mode?.public_http_port,
-  );
-};
-
 export const resolveConsoleApplicationGateway = (
   config: AppConfig,
-  locationProtocol: string,
   accessEntryPort: string,
-): { port: string; protocol: GatewayProtocol } => {
-  const protocol = normalizeGatewayProtocol(locationProtocol);
+): { port: string; protocol: GatewayProtocol } | null => {
+  const protocol = resolvePublicAccessEntryProtocol(config);
   if (shouldOmitPublicAccessEntryPort(config)) {
     return { port: "", protocol };
   }
 
   const port =
-    resolvePublicBaseUrlPort(config, protocol) ??
-    resolveConfiguredPublicPort(config, protocol) ??
-    normalizeGatewayPort(accessEntryPort) ??
-    DEFAULT_GATEWAY_PORT;
+    normalizeGatewayPort(
+      isAnySubdomainRoutingMode(config)
+        ? resolveExplicitPublicAccessEntryPort(
+            config,
+            protocol === "https:" ? "https" : "http",
+          )
+        : null,
+    ) ?? normalizeGatewayPort(accessEntryPort);
+  if (!port) return null;
   return {
     port: isDefaultGatewayPort(protocol, port) ? "" : port,
     protocol,
@@ -100,18 +75,14 @@ export const resolveConsoleApplicationGateway = (
 
 const createGatewayUrl = (
   hostname: string,
-  locationProtocol: string,
   config: AppConfig,
   accessEntryPort: string,
 ): URL | null => {
   try {
     const normalizedHostname = hostname.trim();
     if (!normalizedHostname) return null;
-    const gateway = resolveConsoleApplicationGateway(
-      config,
-      locationProtocol,
-      accessEntryPort,
-    );
+    const gateway = resolveConsoleApplicationGateway(config, accessEntryPort);
+    if (!gateway) return null;
     const url = new URL(`${gateway.protocol}//${normalizedHostname}`);
     if (
       url.username ||
@@ -131,12 +102,10 @@ const createGatewayUrl = (
 
 export const buildConsoleHostApplicationHref = (
   host: string,
-  location: ConsoleApplicationLocation,
+  _location: ConsoleApplicationLocation,
   config: AppConfig,
   accessEntryPort: string,
-): string =>
-  createGatewayUrl(host.trim(), location.protocol, config, accessEntryPort)
-    ?.href ?? "";
+): string => createGatewayUrl(host.trim(), config, accessEntryPort)?.href ?? "";
 
 export const buildConsolePathApplicationHref = (
   path: string,
@@ -144,12 +113,7 @@ export const buildConsolePathApplicationHref = (
   config: AppConfig,
   accessEntryPort: string,
 ): string => {
-  const url = createGatewayUrl(
-    location.hostname,
-    location.protocol,
-    config,
-    accessEntryPort,
-  );
+  const url = createGatewayUrl(location.hostname, config, accessEntryPort);
   if (!url) return "";
 
   const trimmedPath = path.trim();

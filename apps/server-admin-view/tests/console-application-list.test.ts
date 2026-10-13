@@ -367,42 +367,219 @@ describe("console application list", () => {
     assert.equal(items[0]?.iconSrc, "");
   });
 
-  it("uses the console protocol and omits only its matching default port", () => {
+  it("uses the service protocol regardless of the management page protocol", () => {
+    for (const protocol of ["http:", "https:"]) {
+      for (const [enabled, port, expected] of [
+        [true, "443", "https://app.example.test/"],
+        [true, "80", "https://app.example.test:80/"],
+        [false, "80", "http://app.example.test/"],
+        [false, "443", "http://app.example.test:443/"],
+      ] as const) {
+        assert.equal(
+          buildConsoleHostApplicationHref(
+            "app.example.test",
+            { ...location, protocol },
+            config({ ssl: { enabled } }),
+            port,
+          ),
+          expected,
+        );
+      }
+    }
+  });
+
+  it("does not invent links while the entry port is unknown or invalid", () => {
+    for (const port of ["", "invalid", "443oops", "0", "65536"]) {
+      assert.equal(
+        buildConsolePathApplicationHref("/app", location, config(), port),
+        "",
+      );
+      assert.equal(
+        buildConsoleHostApplicationHref(
+          "app.example.test",
+          location,
+          config(),
+          port,
+        ),
+        "",
+      );
+    }
+  });
+
+  it("uses the FRP HTTPS public entry from an HTTP fnOS iframe", () => {
+    const localConsole = { protocol: "http:", hostname: "172.28.0.10" };
+    for (const httpsPort of [0, 27999]) {
+      assert.equal(
+        buildConsoleHostApplicationHref(
+          "app.example.test",
+          localConsole,
+          config({
+            run_type: 1,
+            reverse_proxy_submode: "subdomain",
+            default_tunnel: "frp",
+            subdomain_mode: {
+              ...config().subdomain_mode,
+              public_http_port: 7999,
+              public_https_port: httpsPort,
+              public_auth_base_url: "http://auth.example.test:7999",
+            },
+          }),
+          "27999",
+        ),
+        "https://app.example.test:27999/",
+      );
+    }
+  });
+
+  it("preserves HTTP for FRP gateways without a TLS certificate", () => {
     assert.equal(
       buildConsoleHostApplicationHref(
         "app.example.test",
         location,
-        config({ ssl: { enabled: false } }),
-        "443",
+        config({
+          run_type: 1,
+          reverse_proxy_submode: "subdomain",
+          default_tunnel: "frp",
+          ssl: { enabled: false },
+          subdomain_mode: {
+            ...config().subdomain_mode,
+            public_https_port: 7999,
+          },
+        }),
+        "27999",
       ),
-      "https://app.example.test/",
+      "http://app.example.test:27999/",
     );
+  });
+
+  it("falls back to the resolved entry instead of truncating malformed public ports", () => {
+    for (const port of ["8443oops", "443.5", "4e3", 443.5, true]) {
+      assert.equal(
+        buildConsoleHostApplicationHref(
+          "app.example.test",
+          location,
+          config({
+            subdomain_mode: {
+              ...config().subdomain_mode,
+              public_https_port: port as number,
+            },
+          }),
+          "27999",
+        ),
+        "https://app.example.test:27999/",
+      );
+    }
+  });
+
+  it("resolves path app protocol from the gateway and uses its local entry", () => {
+    assert.equal(
+      buildConsolePathApplicationHref(
+        "/photos",
+        location,
+        config({
+          run_type: 1,
+          reverse_proxy_submode: "path",
+          default_tunnel: "frp",
+          ssl: { enabled: false },
+        }),
+        "17999",
+      ),
+      "http://nas.example.test:17999/photos/",
+    );
+  });
+
+  it("ignores inactive subdomain public ports in path mode", () => {
+    assert.equal(
+      buildConsolePathApplicationHref(
+        "/photos",
+        location,
+        config({
+          run_type: 1,
+          reverse_proxy_submode: "path",
+          default_tunnel: "frp",
+          ssl: { enabled: false },
+          subdomain_mode: {
+            ...config().subdomain_mode,
+            public_auth_base_url: "http://auth.example.test:7999",
+            public_http_port: 7999,
+          },
+        }),
+        "17999",
+      ),
+      "http://nas.example.test:17999/photos/",
+    );
+  });
+
+  it("uses configured explicit standard ports without waiting for the local entry", () => {
+    for (const [enabled, scheme, port] of [
+      [true, "https", 443],
+      [false, "http", 80],
+    ] as const) {
+      assert.equal(
+        buildConsoleHostApplicationHref(
+          "app.example.test",
+          location,
+          config({
+            ssl: { enabled },
+            subdomain_mode: {
+              ...config().subdomain_mode,
+              public_auth_base_url: `${scheme}://auth.example.test:${port}`,
+              public_http_port: 7999,
+              public_https_port: 7999,
+            },
+          }),
+          "",
+        ),
+        `${scheme}://app.example.test/`,
+      );
+    }
+  });
+
+  for (const provider of [
+    "aliyun_esa_enabled",
+    "tencent_edgeone_enabled",
+  ] as const) {
+    it(`uses standard HTTPS for ${provider} even with an HTTP origin and console`, () => {
+      assert.equal(
+        buildConsoleHostApplicationHref(
+          "app.example.test",
+          { ...location, protocol: "http:" },
+          config({
+            ssl: { enabled: false },
+            subdomain_mode: {
+              ...config().subdomain_mode,
+              edge_client_ip_enabled: true,
+              [provider]: true,
+              public_http_port: 7999,
+              public_https_port: 7999,
+            },
+          }),
+          "",
+        ),
+        "https://app.example.test/",
+      );
+    });
+  }
+
+  it("uses Cloudflare public HTTPS when the local origin and console are HTTP", () => {
     assert.equal(
       buildConsoleHostApplicationHref(
         "app.example.test",
         { ...location, protocol: "http:" },
-        config({ ssl: { enabled: true } }),
-        "80",
+        config({
+          run_type: 1,
+          reverse_proxy_submode: "subdomain",
+          default_tunnel: "cloudflared",
+          ssl: { enabled: false },
+          subdomain_mode: {
+            ...config().subdomain_mode,
+            public_http_port: 7999,
+            public_https_port: 7999,
+          },
+        }),
+        "",
       ),
-      "http://app.example.test/",
-    );
-    assert.equal(
-      buildConsolePathApplicationHref(
-        "/app",
-        location,
-        config({ ssl: { enabled: true } }),
-        "invalid",
-      ),
-      "https://nas.example.test:7999/app/",
-    );
-    assert.equal(
-      buildConsoleHostApplicationHref(
-        "app.example.test",
-        location,
-        config({ ssl: { enabled: true } }),
-        "443oops",
-      ),
-      "https://app.example.test:7999/",
+      "https://app.example.test/",
     );
   });
 

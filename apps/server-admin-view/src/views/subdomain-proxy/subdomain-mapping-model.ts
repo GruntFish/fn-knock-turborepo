@@ -3,7 +3,10 @@ import {
   isHttpProxyTargetProtocol,
   isSupportedProxyTargetUrl,
 } from "@admin-shared/utils/proxyTargetInput";
-import { parseExplicitPublicUrlPort } from "@/lib/reverse-proxy-submode";
+import {
+  normalizePublicAccessEntryPort,
+  parseExplicitPublicUrlPort,
+} from "@/lib/reverse-proxy-submode";
 import { normalizeHostMappingAvailability } from "@/lib/host-mapping-availability";
 import type {
   HostMapping,
@@ -122,14 +125,8 @@ export const isMappingDraftValid = ({
   );
 };
 
-export const normalizePublicPort = (value: unknown): number => {
-  const port =
-    typeof value === "number"
-      ? value
-      : Number.parseInt(String(value ?? "").trim(), 10);
-  if (!Number.isFinite(port) || port <= 0 || port > 65535) return 0;
-  return Math.floor(port);
-};
+export const normalizePublicPort = (value: unknown): number =>
+  normalizePublicAccessEntryPort(value) ?? 0;
 
 export const parsePublicAuthBaseUrlPort = (
   value: string | undefined,

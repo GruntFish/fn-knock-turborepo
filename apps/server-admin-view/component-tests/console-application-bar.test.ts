@@ -1,21 +1,16 @@
-import { DOMWrapper, mount } from "@vue/test-utils";
+import { DOMWrapper, flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { nextTick, ref } from "vue";
+import { nextTick } from "vue";
 import { createI18n } from "vue-i18n";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/types";
 import { useConfigStore } from "../src/store/config";
 import ConsoleApplicationBar from "../src/views/layout/ConsoleApplicationBar.vue";
 
-const accessEntry = vi.hoisted(() => ({
-  load: vi.fn().mockResolvedValue(undefined),
-}));
+const accessEntry = vi.hoisted(() => ({ load: vi.fn() }));
 
-vi.mock("@/composables/useAccessEntryPort", () => ({
-  useAccessEntryPort: () => ({
-    accessEntryPort: ref("7999"),
-    loadAccessEntryPort: accessEntry.load,
-  }),
+vi.mock("@/lib/api/system", () => ({
+  SystemAPI: { getAccessEntry: accessEntry.load },
 }));
 
 const i18n = createI18n({
@@ -23,6 +18,11 @@ const i18n = createI18n({
   locale: "en",
   messages: {
     en: {
+      common: {
+        loading: "Loading...",
+        loadConfigFailed: "Failed to load configuration",
+        refreshStatus: "Refresh",
+      },
       admin: {
         consoleApplicationList: {
           label: "Apps",
@@ -85,14 +85,16 @@ const hostConfig = (faviconOverride: string, showAppIcon = true): AppConfig =>
 
 describe("ConsoleApplicationBar", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    accessEntry.load.mockResolvedValue({ port: "7999" });
     setActivePinia(createPinia());
     document.body.replaceChildren();
+    window.location.href = "http://172.28.0.10:5666/";
   });
 
   const openDialog = async (wrapper: ReturnType<typeof mount>) => {
     await wrapper.get("button").trigger("click");
-    await nextTick();
+    await flushPromises();
     const content = document.body.querySelector<HTMLElement>(
       '[data-slot="dialog-content"]',
     );
@@ -107,6 +109,7 @@ describe("ConsoleApplicationBar", () => {
       global: { plugins: [i18n] },
     });
 
+    await flushPromises();
     const nav = wrapper.get("nav");
     expect(nav.attributes("aria-label")).toBe("Console application list");
     expect(nav.classes()).toContain("max-w-full");
@@ -155,6 +158,7 @@ describe("ConsoleApplicationBar", () => {
       global: { plugins: [i18n] },
     });
 
+    await flushPromises();
     expect(wrapper.text()).toContain("No applications available");
     const dialog = await openDialog(wrapper);
     expect(dialog.text()).toContain("No applications available");
@@ -175,6 +179,114 @@ describe("ConsoleApplicationBar", () => {
 
     expect(wrapper.find("button").exists()).toBe(false);
     expect(accessEntry.load).not.toHaveBeenCalled();
+  });
+
+  it("waits for FRP entry resolution before linking from the HTTP fnOS console", async () => {
+    let resolveEntry!: (value: { port: string }) => void;
+    accessEntry.load.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveEntry = resolve;
+        }),
+    );
+    const store = useConfigStore();
+    store.config = {
+      ...hostConfig("", false),
+      run_type: 1,
+      reverse_proxy_submode: "subdomain",
+      default_tunnel: "frp",
+      ssl: { enabled: true },
+      subdomain_mode: { public_http_port: 7999, public_https_port: 0 },
+    } as AppConfig;
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    expect(wrapper.find("a").exists()).toBe(false);
+    expect(wrapper.text()).toContain("Loading...");
+    const dialog = await openDialog(wrapper);
+    expect(dialog.find("a").exists()).toBe(false);
+
+    resolveEntry({ port: "27999" });
+    await flushPromises();
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      "https://photos.example.test:27999/",
+    );
+    expect(dialog.get("a").attributes("href")).toBe(
+      "https://photos.example.test:27999/",
+    );
+    wrapper.unmount();
+  });
+
+  it("does not expose a fallback link on failure and retries when the dialog opens", async () => {
+    accessEntry.load.mockRejectedValueOnce(new Error("offline"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    useConfigStore().config = pathConfig();
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    expect(wrapper.find("a").exists()).toBe(false);
+    expect(wrapper.text()).toContain("Failed to load configuration");
+
+    accessEntry.load.mockResolvedValueOnce({ port: "27999" });
+    const dialog = await openDialog(wrapper);
+    expect(dialog.get("a").attributes("href")).toBe(
+      "http://172.28.0.10:27999/photos/",
+    );
+    expect(accessEntry.load).toHaveBeenCalledTimes(2);
+    wrapper.unmount();
+    warning.mockRestore();
+  });
+
+  it("allows retry after invalid entry responses inside the open dialog", async () => {
+    accessEntry.load.mockResolvedValue({ port: "invalid" });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    useConfigStore().config = pathConfig();
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    const dialog = await openDialog(wrapper);
+    expect(dialog.find("a").exists()).toBe(false);
+    const retry = dialog
+      .findAll("button")
+      .find((button) => button.text() === "Refresh")!;
+    expect(retry).toBeDefined();
+    accessEntry.load.mockResolvedValue({ port: "27999" });
+    await retry.trigger("click");
+    await flushPromises();
+    expect(dialog.get("a").attributes("href")).toBe(
+      "http://172.28.0.10:27999/photos/",
+    );
+    wrapper.unmount();
+    warning.mockRestore();
+  });
+
+  it("reloads on tunnel changes and ignores responses from an older mode", async () => {
+    let resolveOldEntry!: (value: { port: string }) => void;
+    accessEntry.load.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOldEntry = resolve;
+        }),
+    );
+    const store = useConfigStore();
+    store.config = { ...pathConfig(), default_tunnel: "cloudflared" };
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    accessEntry.load.mockResolvedValueOnce({ port: "27999" });
+    store.config.default_tunnel = "frp";
+    await flushPromises();
+    expect(wrapper.get("a").attributes("href")).toBe(
+      "http://172.28.0.10:27999/photos/",
+    );
+    resolveOldEntry({ port: "7999" });
+    await flushPromises();
+    expect(wrapper.get("a").attributes("href")).toBe(
+      "http://172.28.0.10:27999/photos/",
+    );
+    expect(accessEntry.load).toHaveBeenCalledTimes(2);
+    wrapper.unmount();
   });
 
   it("retries a Host icon after its source changes", async () => {

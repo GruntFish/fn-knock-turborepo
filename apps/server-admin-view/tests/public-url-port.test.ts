@@ -55,3 +55,32 @@ test("gateway host settings choose ports for the public protocol", () => {
   assert.equal(resolveExplicitPublicAccessEntryPort(config, "https"), 8443);
   assert.equal(resolveExplicitPublicAccessEntryPort(config, "http"), 9080);
 });
+
+test("public port validation agrees with backend integer parsing", () => {
+  for (const [value, expected] of [
+    ["443", 443],
+    [" +443 ", 443],
+    ["000443", 443],
+    [65535, 65535],
+    ["443oops", null],
+    ["443.5", null],
+    [443.5, null],
+    ["4e3", null],
+    ["0x1bb", null],
+    [true, null],
+    [[], null],
+    ["", null],
+    ["65536", null],
+    ["0", null],
+    [-1, null],
+  ] as const) {
+    const config = {
+      subdomain_mode: { public_https_port: value },
+    } as unknown as Parameters<typeof resolveExplicitPublicAccessEntryPort>[0];
+    assert.equal(
+      resolveExplicitPublicAccessEntryPort(config, "https"),
+      expected,
+    );
+    assert.equal(normalizePublicPort(value), expected ?? 0);
+  }
+});
