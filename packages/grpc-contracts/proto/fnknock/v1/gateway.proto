@@ -367,6 +367,7 @@ message GatewayPortalConfig {
   bool show_wol = 6;
   string navigation_mode = 7;
   bool smart_lan_detection = 8;
+  optional bool select_page_enabled = 9;
 }
 
 message GatewayUnmatchedRouteConfig {

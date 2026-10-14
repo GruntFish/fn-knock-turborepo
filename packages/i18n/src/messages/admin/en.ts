@@ -822,6 +822,9 @@ export const enAdmin = {
     },
   },
   gatewaySettings: {
+    selectPageTitle: "Mapping selection page",
+    selectPageDescription:
+      "Allow access to mapping entries through /__select__. When disabled, this address and requests that would open the selection page follow the unmatched route policy.",
     http3: {
       edit: "Edit HTTP/3",
       saved: "HTTP/3 settings saved",

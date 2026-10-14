@@ -8,6 +8,7 @@ export const normalizeGatewayPortalConfig = (
   portal?: Partial<GatewayPortalConfig> | null,
 ): GatewayPortalConfig => ({
   enabled: portal?.enabled !== false,
+  select_page_enabled: portal?.select_page_enabled !== false,
   display_style: portal?.display_style === "domain" ? "domain" : "title",
   show_app_icon: portal?.show_app_icon !== false,
   show_wol: portal?.show_wol !== false,

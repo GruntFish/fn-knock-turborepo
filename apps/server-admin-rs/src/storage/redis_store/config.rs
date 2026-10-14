@@ -99,6 +99,7 @@ pub fn default_config() -> Value {
     });
     let gateway_portal = json!({
         "enabled": true,
+        "select_page_enabled": true,
         "display_style": "title",
         "show_app_icon": true,
         "show_wol": true,

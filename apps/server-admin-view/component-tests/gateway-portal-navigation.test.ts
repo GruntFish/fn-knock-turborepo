@@ -81,6 +81,7 @@ describe("portal navigation settings", () => {
 
   it("saves smart detection immediately and preserves the hidden navigation configuration", async () => {
     stored.portal.navigation_mode = "lan";
+    stored.portal.select_page_enabled = false;
     const wrapper = await setup();
     await smart(wrapper).trigger("click");
     await flushPromises();
@@ -97,6 +98,7 @@ describe("portal navigation settings", () => {
       portal: { smart_lan_detection: false },
     });
     expect(stored.portal.navigation_mode).toBe("lan");
+    expect(stored.portal.select_page_enabled).toBe(false);
   });
 
   it("rolls back a failed smart save", async () => {

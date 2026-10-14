@@ -744,6 +744,9 @@ export const zhCNAdmin = {
     },
   },
   gatewaySettings: {
+    selectPageTitle: "映射选择页",
+    selectPageDescription:
+      "允许通过 /__select__ 查看映射入口。关闭后，该地址及原本进入选择页的请求按未匹配路由策略处理。",
     http3: {
       edit: "编辑 HTTP/3",
       saved: "HTTP/3 设置已保存",

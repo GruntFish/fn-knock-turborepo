@@ -1619,6 +1619,7 @@ fn parse_crawler_blocker(value: &Value) -> CrawlerBlockerConfig {
 fn parse_portal(value: &Value) -> GatewayPortalConfig {
     GatewayPortalConfig {
         enabled: bool_field(value, "enabled", true),
+        select_page_enabled: Some(bool_field(value, "select_page_enabled", true)),
         display_style: string_field(value, "display_style"),
         show_app_icon: bool_field(value, "show_app_icon", false),
         icon_drag_mode: string_field(value, "icon_drag_mode"),
@@ -1994,6 +1995,7 @@ fn crawler_blocker_to_json(config: CrawlerBlockerConfig) -> Value {
 fn portal_to_json(config: GatewayPortalConfig) -> Value {
     json!({
         "enabled": config.enabled,
+        "select_page_enabled": config.select_page_enabled.unwrap_or(true),
         "display_style": config.display_style,
         "show_app_icon": config.show_app_icon,
         "show_wol": config.show_wol,
@@ -2471,6 +2473,23 @@ fn log_delete_to_json(result: crate::grpc_proto::GatewayLogDeleteResult) -> Valu
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn select_page_grpc_conversion_preserves_presence_and_defaults() {
+        assert_eq!(
+            super::parse_portal(&serde_json::json!({})).select_page_enabled,
+            Some(true)
+        );
+        for enabled in [true, false] {
+            let wire = super::parse_portal(&serde_json::json!({"select_page_enabled": enabled}));
+            assert_eq!(wire.select_page_enabled, Some(enabled));
+            assert_eq!(super::portal_to_json(wire)["select_page_enabled"], enabled);
+        }
+        assert_eq!(
+            super::portal_to_json(super::GatewayPortalConfig::default())["select_page_enabled"],
+            true
+        );
+    }
     use super::*;
 
     #[tokio::test]

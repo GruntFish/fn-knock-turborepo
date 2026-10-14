@@ -168,6 +168,14 @@ const {
         @change="form.crawler_blocker.enabled = $event"
       />
 
+      <FeatureSwitchRow
+        :title="t('admin.gatewaySettings.selectPageTitle')"
+        :description="t('admin.gatewaySettings.selectPageDescription')"
+        :model-value="form.portal.select_page_enabled"
+        :disabled="isGatewaySettingsBusy"
+        @change="form.portal.select_page_enabled = $event"
+      />
+
       <GatewayPortalSummaryRow
         :enabled="portalSummary?.enabled !== false"
         :show-app-icon="portalSummary?.show_app_icon !== false"

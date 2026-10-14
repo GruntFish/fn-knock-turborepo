@@ -680,6 +680,9 @@ export const zhHantAdmin = {
   },
   gatewaySettings: {
     ...zhCNAdmin.gatewaySettings,
+    selectPageTitle: "映射選擇頁",
+    selectPageDescription:
+      "允許透過 /__select__ 查看映射入口。關閉後，此位址及原本進入選擇頁的請求將依未匹配路由策略處理。",
     http3: {
       edit: "編輯 HTTP/3",
       saved: "HTTP/3 設定已儲存",

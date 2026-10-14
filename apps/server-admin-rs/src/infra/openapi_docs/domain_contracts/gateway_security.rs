@@ -35,6 +35,7 @@ pub(super) struct GatewayCrawlerBlockerUpdateData {
 #[derive(Serialize, ToSchema)]
 pub(super) struct GatewayPortalData {
     enabled: bool,
+    select_page_enabled: bool,
     display_style: String,
     show_app_icon: bool,
     show_wol: bool,
@@ -47,6 +48,7 @@ pub(super) struct GatewayPortalData {
 #[derive(Serialize, ToSchema)]
 pub(super) struct GatewayPortalUpdateData {
     enabled: Option<bool>,
+    select_page_enabled: Option<bool>,
     display_style: Option<String>,
     show_app_icon: Option<bool>,
     show_wol: Option<bool>,

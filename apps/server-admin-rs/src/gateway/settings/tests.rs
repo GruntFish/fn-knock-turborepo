@@ -162,6 +162,7 @@ fn gateway_response_uses_node_defaults() {
         normalize_gateway_portal(&json!({})),
         json!({
             "enabled": true,
+            "select_page_enabled": true,
             "display_style": "title",
             "show_app_icon": true,
             "show_wol": true,
@@ -660,4 +661,92 @@ fn disabled_host_behavior_requires_gateway_acknowledgement() {
     assert!(error.contains("upgrade the gateway backend"));
     assert!(error.contains("disabled_host_behavior"));
     assert!(super::runtime::ensure_gateway_unmatched_route_applied(&json!({}), legacy).is_ok());
+}
+
+#[test]
+fn select_page_defaults_and_partial_updates_are_independent() {
+    assert_eq!(
+        normalize_gateway_portal(&json!({}))["select_page_enabled"],
+        true
+    );
+    let mut config = json!({"gateway_portal": {"enabled": false}});
+    apply_gateway_patch(
+        &mut config,
+        json!({"portal": {"select_page_enabled": false}})
+            .as_object()
+            .unwrap(),
+    );
+    assert_eq!(config["gateway_portal"]["enabled"], false);
+    apply_gateway_patch(
+        &mut config,
+        json!({"portal": {"enabled": true, "version": "v2"}})
+            .as_object()
+            .unwrap(),
+    );
+    assert_eq!(config["gateway_portal"]["select_page_enabled"], false);
+    assert_eq!(
+        super::runtime::effective_gateway_portal(&config)["select_page_enabled"],
+        false
+    );
+    assert_eq!(config["gateway_portal"]["enabled"], true);
+}
+
+#[test]
+fn select_page_runtime_echo_requires_explicit_disable_acknowledgement() {
+    let requested = json!({"select_page_enabled": false});
+    assert!(
+        super::runtime::ensure_gateway_portal_applied(
+            &requested,
+            json!({"success": true, "data": requested})
+        )
+        .is_ok()
+    );
+    for applied in [json!({}), json!({"select_page_enabled": true})] {
+        let error = super::runtime::ensure_gateway_portal_applied(
+            &json!({"select_page_enabled": false}),
+            json!({"success": true, "data": applied}),
+        )
+        .unwrap_err();
+        assert!(error.contains("upgrade the gateway backend"));
+        assert!(error.contains("select_page_enabled"));
+    }
+    assert!(
+        super::runtime::ensure_gateway_portal_applied(
+            &json!({"select_page_enabled": true}),
+            json!({"success": true, "data": {}})
+        )
+        .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn select_page_update_rolls_back_persistence_when_gateway_is_unavailable() {
+    let (_directory, state) = gateway_settings_test_state().await;
+    let previous = state.storage.store.get_config().await.unwrap();
+    let response = super::handlers::update_gateway(
+        State(state.clone()),
+        axum::Json(json!({"portal": {"select_page_enabled": false}})),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let restored = state.storage.store.get_config().await.unwrap();
+    assert_eq!(restored, previous);
+}
+
+#[tokio::test]
+async fn select_page_persisted_preference_is_used_by_boot_runtime_config() {
+    let (_directory, state) = gateway_settings_test_state().await;
+    let mut config = state.storage.store.get_config().await.unwrap();
+    apply_gateway_patch(
+        &mut config,
+        json!({"portal": {"select_page_enabled": false}})
+            .as_object()
+            .unwrap(),
+    );
+    state.storage.store.save_config(&config).await.unwrap();
+    let restored = state.storage.store.get_config().await.unwrap();
+    assert_eq!(
+        super::runtime::effective_gateway_portal(&restored)["select_page_enabled"],
+        false
+    );
 }

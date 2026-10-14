@@ -12850,6 +12850,9 @@
             ],
             "type": "string"
           },
+          "select_page_enabled": {
+            "type": "boolean"
+          },
           "show_app_icon": {
             "type": "boolean"
           },
@@ -12869,6 +12872,7 @@
         },
         "required": [
           "enabled",
+          "select_page_enabled",
           "display_style",
           "show_app_icon",
           "show_wol",
@@ -12914,6 +12918,12 @@
             ],
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "select_page_enabled": {
+            "type": [
+              "boolean",
               "null"
             ]
           },

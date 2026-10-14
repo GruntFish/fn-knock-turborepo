@@ -81,6 +81,8 @@ export const useGatewaySettingsController = () => {
   const isDirty = computed(() => {
     if (!settings.value) return false;
     return (
+      settings.value.portal.select_page_enabled !==
+        form.portal.select_page_enabled ||
       settings.value.auth_cache_ttl_seconds !==
         Number(form.auth_cache_ttl_seconds) ||
       settings.value.auth_cache_unauthorized_ttl_seconds !==
@@ -193,6 +195,7 @@ export const useGatewaySettingsController = () => {
     form.auth_cache_unauthorized_ttl_seconds =
       data.auth_cache_unauthorized_ttl_seconds;
     form.portal.enabled = snapshot.portal.enabled;
+    form.portal.select_page_enabled = snapshot.portal.select_page_enabled;
     form.portal.display_style = snapshot.portal.display_style;
     form.portal.show_app_icon = snapshot.portal.show_app_icon;
     form.portal.icon_drag_mode = snapshot.portal.icon_drag_mode;
@@ -226,6 +229,14 @@ export const useGatewaySettingsController = () => {
     await runSaveSettings(
       () =>
         ConfigAPI.updateGatewaySettings({
+          ...(settings.value?.portal.select_page_enabled !==
+          form.portal.select_page_enabled
+            ? {
+                portal: {
+                  select_page_enabled: form.portal.select_page_enabled,
+                },
+              }
+            : {}),
           auth_cache_ttl_seconds: clampCacheTtl(form.auth_cache_ttl_seconds),
           auth_cache_unauthorized_ttl_seconds: clampCacheTtl(
             form.auth_cache_unauthorized_ttl_seconds,

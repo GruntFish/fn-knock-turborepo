@@ -10768,6 +10768,7 @@ export interface components {
             icon_drag_mode: "corners" | "free";
             /** @enum {string} */
             navigation_mode: "internet" | "lan";
+            select_page_enabled: boolean;
             show_app_icon: boolean;
             show_wol: boolean;
             smart_lan_detection: boolean;
@@ -10782,6 +10783,7 @@ export interface components {
             icon_drag_mode?: "corners" | "free" | null;
             /** @enum {string|null} */
             navigation_mode?: "internet" | "lan" | null;
+            select_page_enabled?: boolean | null;
             show_app_icon?: boolean | null;
             show_wol?: boolean | null;
             smart_lan_detection?: boolean | null;

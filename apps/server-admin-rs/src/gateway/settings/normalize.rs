@@ -53,6 +53,7 @@ pub(super) fn normalize_gateway_crawler_blocker(value: &Value) -> Value {
 
 pub(super) fn normalize_gateway_portal(value: &Value) -> Value {
     json!({
+        "select_page_enabled": value.get("select_page_enabled").and_then(Value::as_bool).unwrap_or(true),
         "enabled": value.get("enabled").and_then(Value::as_bool).unwrap_or(true),
         "display_style": if value.get("display_style").and_then(Value::as_str) == Some("domain") { "domain" } else { "title" },
         "show_app_icon": value.get("show_app_icon").and_then(Value::as_bool).unwrap_or(true),
@@ -215,6 +216,7 @@ pub(super) fn default_gateway_crawler_blocker() -> Value {
 pub(super) fn default_gateway_portal() -> Value {
     json!({
         "enabled": true,
+        "select_page_enabled": true,
         "display_style": "title",
         "show_app_icon": true,
         "show_wol": true,

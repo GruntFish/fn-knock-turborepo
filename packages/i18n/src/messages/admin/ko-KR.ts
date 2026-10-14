@@ -814,6 +814,9 @@ export const koKRAdmin = {
     },
   },
   gatewaySettings: {
+    selectPageTitle: "매핑 선택 페이지",
+    selectPageDescription:
+      "/__select__에서 매핑 목록을 볼 수 있습니다. 비활성화하면 이 주소 및 선택 페이지로 이동하던 요청은 일치하지 않는 경로 정책에 따라 처리됩니다.",
     http3: {
       edit: "HTTP/3 편집",
       saved: "HTTP/3 설정이 저장되었습니다.",

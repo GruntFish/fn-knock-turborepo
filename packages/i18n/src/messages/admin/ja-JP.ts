@@ -823,6 +823,9 @@ export const jaJPAdmin = {
     },
   },
   gatewaySettings: {
+    selectPageTitle: "マッピング選択ページ",
+    selectPageDescription:
+      "/__select__ からマッピング一覧を表示できます。無効にすると、このアドレスへのアクセスと選択ページに移動するリクエストは、未一致ルートのポリシーに従って処理されます。",
     http3: {
       edit: "HTTP/3 を編集",
       saved: "HTTP/3 設定を保存しました",
