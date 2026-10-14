@@ -1,14 +1,19 @@
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+};
 
 use axum::{
-    extract::State,
-    http::StatusCode,
+    extract::{ConnectInfo, Request, State},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
 use serde_json::Value;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use crate::http_utils;
 use crate::proxy_utils::is_reverse_proxy_subdomain_mode;
 use crate::{i18n::Translator, response, state::AppState};
 
@@ -24,6 +29,14 @@ struct AccessEntryInfo {
     is_default: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct AccessEntryResponse {
+    #[serde(flatten)]
+    entry: AccessEntryInfo,
+    #[serde(rename = "clientIsLan")]
+    client_is_lan: Option<bool>,
+}
+
 pub fn system_info_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(access_entry))
 }
@@ -35,9 +48,17 @@ pub fn system_info_routes() -> OpenApiRouter<AppState> {
     operation_id = "get_api_admin_system_access_entry",
     responses((status = 200, description = "Resolved public management access entry"))
 )]
-async fn access_entry(State(state): State<AppState>) -> Response {
-    match state.storage.store.get_config().await {
-        Ok(config) => response::ok(resolve_access_entry_info(&config)).into_response(),
+async fn access_entry(State(state): State<AppState>, request: Request) -> Response {
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip());
+    let mut result = match state.storage.store.get_config().await {
+        Ok(config) => response::ok(AccessEntryResponse {
+            entry: resolve_access_entry_info(&config),
+            client_is_lan: resolve_client_is_lan(request.headers(), peer),
+        })
+        .into_response(),
         Err(error) => {
             let translator = Translator::from_state(&state).await;
             tracing::warn!(%error, "failed to load config for access entry");
@@ -46,7 +67,32 @@ async fn access_entry(State(state): State<AppState>) -> Response {
                 system_info_route_text(&translator, "loadAccessEntryFailed"),
             )
         }
-    }
+    };
+    // This response now includes a per-visitor decision, not just shared ports.
+    http_utils::apply_no_store_headers(result.headers_mut());
+    result
+}
+
+fn resolve_client_is_lan(headers: &HeaderMap, peer: Option<IpAddr>) -> Option<bool> {
+    let peer = peer?.to_canonical();
+    // Only local CGI/gateway hops may supply a resolved client IP. Direct
+    // clients cannot change the decision by supplying forwarding headers.
+    let client = if peer.is_loopback() {
+        http_utils::get_client_ip(headers)
+            .parse::<IpAddr>()
+            .ok()?
+            .to_canonical()
+    } else {
+        peer
+    };
+    // Match Go gatewayPortalForNavigation: RFC1918, IPv6 ULA and CGNAT VPN
+    // addresses use LAN targets. Loopback/unknown proxy hops never imply LAN.
+    Some(match client {
+        IpAddr::V4(ip) => {
+            ip.is_private() || (ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]))
+        }
+        IpAddr::V6(ip) => ip.segments()[0] & 0xfe00 == 0xfc00,
+    })
 }
 
 fn resolve_access_entry_info(config: &Value) -> AccessEntryInfo {
@@ -200,6 +246,133 @@ fn data_dir() -> PathBuf {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn portal_client_network_matches_gateway_private_and_vpn_ranges() {
+        for ip in [
+            "10.0.0.1",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.1.2",
+            "100.64.0.1",
+            "100.127.255.254",
+            "fc00::1",
+            "fdff::1",
+            "::ffff:192.168.1.2",
+        ] {
+            assert_eq!(
+                resolve_client_is_lan(&HeaderMap::new(), Some(ip.parse().unwrap())),
+                Some(true),
+                "{ip}"
+            );
+        }
+        for ip in [
+            "8.8.8.8",
+            "172.32.0.1",
+            "100.63.255.255",
+            "100.128.0.1",
+            "169.254.1.2",
+            "fe80::1",
+            "2001:db8::1",
+            "::",
+            "ff02::1",
+        ] {
+            assert_eq!(
+                resolve_client_is_lan(&HeaderMap::new(), Some(ip.parse().unwrap())),
+                Some(false),
+                "{ip}"
+            );
+        }
+        for ip in ["127.0.0.1", "::1", "::ffff:127.0.0.1"] {
+            assert_eq!(
+                resolve_client_is_lan(&HeaderMap::new(), Some(ip.parse().unwrap())),
+                None,
+                "{ip}"
+            );
+        }
+    }
+
+    #[test]
+    fn portal_client_network_only_trusts_local_proxy_headers() {
+        let local = Some("127.0.0.1".parse().unwrap());
+        let mut headers = HeaderMap::new();
+        // The fnOS CGI forwards the server-provided REMOTE_ADDR as x-real-ip.
+        headers.insert("x-real-ip", "192.168.1.2".parse().unwrap());
+        assert_eq!(resolve_client_is_lan(&headers, local), Some(true));
+        assert_eq!(
+            resolve_client_is_lan(&headers, Some("8.8.8.8".parse().unwrap())),
+            Some(false)
+        );
+        assert_eq!(resolve_client_is_lan(&headers, None), None);
+        headers.insert("x-forwarded-for", "8.8.8.8".parse().unwrap());
+        assert_eq!(resolve_client_is_lan(&headers, local), Some(false));
+        assert_eq!(
+            resolve_client_is_lan(&headers, Some("192.168.1.3".parse().unwrap())),
+            Some(true)
+        );
+        headers.remove("x-forwarded-for");
+        for (value, expected) in [
+            ("invalid", None),
+            ("127.0.0.1", Some(false)),
+            ("::1", Some(false)),
+            ("100.100.1.2", Some(true)),
+            ("::ffff:100.100.1.2", Some(true)),
+        ] {
+            headers.insert("x-real-ip", value.parse().unwrap());
+            assert_eq!(resolve_client_is_lan(&headers, local), expected, "{value}");
+        }
+    }
+
+    #[tokio::test]
+    async fn access_entry_reports_client_network_without_caching_it() {
+        use axum::body::{Body, to_bytes};
+        use tower::ServiceExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut settings = {
+            let _environment = crate::test_support::EnvGuard::new(&[]);
+            crate::settings::Settings::from_env()
+        };
+        settings.data_dir = directory.path().join("data");
+        settings.gateway_config_dir = directory.path().join("gateway");
+        settings.sqlite_path = directory.path().join("test.sqlite3");
+        settings.internal_rpc_token = "test-internal-rpc-token".to_string();
+        let state = AppState::new(settings).await.unwrap();
+        let router: axum::Router = system_info_routes().with_state(state).into();
+        for (peer, forwarded, expected) in [
+            ("127.0.0.1:8000", Some("192.168.1.20"), json!(true)),
+            ("127.0.0.1:8000", Some("8.8.8.8"), json!(false)),
+            ("127.0.0.1:8000", None, Value::Null),
+            ("8.8.8.8:8000", Some("192.168.1.20"), json!(false)),
+            ("192.168.1.20:8000", None, json!(true)),
+        ] {
+            let mut request = Request::builder()
+                .uri("/api/admin/system/access-entry")
+                .extension(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
+            if let Some(ip) = forwarded {
+                request = request.header("x-real-ip", ip);
+            }
+            let response = router
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(
+                response.headers()["cache-control"]
+                    .to_str()
+                    .unwrap()
+                    .contains("no-store")
+            );
+            let body: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            assert_eq!(body["data"]["clientIsLan"], expected);
+            assert!(body["data"]["port"].is_string());
+            assert!(body["data"]["isDefault"].is_boolean());
+            assert!(body["data"]["env"].is_string());
+        }
+    }
 
     #[test]
     fn extracts_managed_frpc_remote_port_from_toml() {

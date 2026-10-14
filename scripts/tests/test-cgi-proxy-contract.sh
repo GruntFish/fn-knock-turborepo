@@ -73,6 +73,8 @@ cat > "${WORK_DIR}/bin/curl" <<'FAKE_CURL'
 header_file=""
 body_file=""
 accept_encoding=""
+real_ip=""
+forwarded_for=""
 target_url=""
 request_method="GET"
 forward_body="false"
@@ -89,6 +91,8 @@ while [ "$#" -gt 0 ]; do
     -H)
       case "$2" in
         accept-encoding:*) accept_encoding="${2#accept-encoding: }" ;;
+        x-real-ip:*) real_ip="${2#x-real-ip: }" ;;
+        x-forwarded-for:*) forwarded_for="${2#x-forwarded-for: }" ;;
       esac
       shift 2
       ;;
@@ -114,6 +118,8 @@ else
 fi
 if [ -n "${CAPTURE_FILE:-}" ]; then
   {
+    printf 'real_ip=%s\n' "${real_ip}"
+    printf 'forwarded_for=%s\n' "${forwarded_for}"
     printf 'method=%s\n' "${request_method}"
     printf 'url=%s\n' "${target_url}"
     printf 'body=%s\n' "${forwarded_body}"
@@ -187,6 +193,29 @@ do
   printf '%s' "${asset_output}" | tr -d '\r' | grep -Fq \
     'X-Content-Type-Options: nosniff' || \
     fail "static asset lost nosniff protection: ${cgi}"
+done
+
+# Exercise the real CGI commands: only the server's peer address may cross
+# the loopback hop. In particular, a forged browser header must not imply LAN.
+for cgi in "${FPK_CGI}" "${ROOT_DIR}/apps/fn-knock-lite/app/ui/index.cgi"; do
+  for remote in '192.168.1.20' '8.8.8.8' 'fd00::20' '::ffff:192.168.1.20' '' 'invalid' $'192.168.1.1\r\nx-forged: true'; do
+    capture_file="${WORK_DIR}/client-ip.capture"
+    PATH="${WORK_DIR}/bin:${PATH}" \
+    EXPECTED_ACCEPT_ENCODING='' \
+    CAPTURE_FILE="${capture_file}" \
+    REMOTE_ADDR="${remote}" \
+    HTTP_X_REAL_IP='10.0.0.99' \
+    HTTP_X_FORWARDED_FOR='10.0.0.99' \
+    HTTP_EO_CONNECTING_IP='10.0.0.99' \
+    HTTP_ALI_REAL_CLIENT_IP='10.0.0.99' \
+    REQUEST_METHOD=GET \
+    REQUEST_URI='/cgi/ThirdParty/fn-knock/index.cgi/api/admin/system/access-entry' \
+      sh "${cgi}" >/dev/null
+    expected="${remote}"
+    case "${remote}" in ''|*[!0-9a-fA-F:.]*) expected='' ;; esac
+    grep -Fxq "real_ip=${expected}" "${capture_file}" || fail "incorrect CGI client address: ${cgi}"
+    grep -Fxq 'forwarded_for=' "${capture_file}" || fail "CGI trusted browser forwarding headers: ${cgi}"
+  done
 done
 
 assert_fpk_terminal_forwarding() {

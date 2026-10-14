@@ -13,6 +13,7 @@ export function useAccessEntryPort({
   },
 }: UseAccessEntryPortOptions = {}) {
   const accessEntryPort = ref(fallbackPort);
+  const clientIsLan = ref<boolean | null>(null);
   const isLoading = ref(false);
   const hasLoadError = ref(false);
   let requestId = 0;
@@ -21,9 +22,14 @@ export function useAccessEntryPort({
     const currentRequest = ++requestId;
     isLoading.value = true;
     hasLoadError.value = false;
+    clientIsLan.value = null;
     if (!fallbackPort) accessEntryPort.value = "";
     try {
       const info = await SystemAPI.getAccessEntry();
+      if (currentRequest !== requestId) return;
+      // LAN navigation does not depend on a valid public gateway port.
+      clientIsLan.value =
+        typeof info?.clientIsLan === "boolean" ? info.clientIsLan : null;
       const port = info.port.trim();
       if (
         !/^\d{1,5}$/u.test(port) ||
@@ -32,7 +38,7 @@ export function useAccessEntryPort({
       ) {
         throw new Error("Invalid access entry port");
       }
-      if (currentRequest === requestId) accessEntryPort.value = port;
+      accessEntryPort.value = port;
     } catch (error) {
       if (currentRequest !== requestId) return;
       hasLoadError.value = true;
@@ -44,6 +50,7 @@ export function useAccessEntryPort({
 
   return {
     accessEntryPort,
+    clientIsLan,
     isLoading,
     hasLoadError,
     loadAccessEntryPort,

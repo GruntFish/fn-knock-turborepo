@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { AppWindow, Globe2, Link2 } from "lucide-vue-next";
 import {
@@ -19,8 +19,13 @@ import {
 
 const configStore = useConfigStore();
 const { t } = useI18n();
-const { accessEntryPort, loadAccessEntryPort, isLoading, hasLoadError } =
-  useAccessEntryPort({ fallbackPort: "" });
+const {
+  accessEntryPort,
+  clientIsLan,
+  loadAccessEntryPort,
+  isLoading,
+  hasLoadError,
+} = useAccessEntryPort({ fallbackPort: "" });
 const brokenIcons = ref<Set<string>>(new Set());
 const isDialogOpen = ref(false);
 const dialogTriggerRef = ref<HTMLButtonElement | null>(null);
@@ -39,6 +44,7 @@ const items = computed(() => {
     return [];
   return buildConsoleApplicationItems({
     accessEntryPort: accessEntryPort.value,
+    clientIsLan: clientIsLan.value,
     config: configStore.config,
     location: window.location,
   });
@@ -71,6 +77,7 @@ watch(
     () => configStore.config?.run_type,
     () => configStore.config?.reverse_proxy_submode,
     () => configStore.config?.default_tunnel,
+    () => configStore.config?.gateway_portal?.smart_lan_detection,
   ],
   ([visible]) => {
     if (visible) void loadAccessEntryPort();
@@ -79,7 +86,43 @@ watch(
 );
 
 watch(isDialogOpen, (open) => {
-  if (open && hasLoadError.value) void loadAccessEntryPort();
+  if (
+    open &&
+    !isLoading.value &&
+    (hasLoadError.value ||
+      configStore.config?.gateway_portal?.smart_lan_detection)
+  )
+    void loadAccessEntryPort();
+});
+
+let mounted = false;
+let refreshQueued = false;
+const canRefreshClientContext = () =>
+  mounted &&
+  isVisible.value &&
+  configStore.config?.gateway_portal?.smart_lan_detection === true &&
+  document.visibilityState !== "hidden";
+const refreshClientContext = () => {
+  if (!canRefreshClientContext() || refreshQueued) return;
+  // A restored page can emit focus and visibility events together. Coalesce
+  // those events, but supersede any request made before the network changed.
+  refreshQueued = true;
+  queueMicrotask(() => {
+    refreshQueued = false;
+    if (canRefreshClientContext()) void loadAccessEntryPort();
+  });
+};
+onMounted(() => {
+  mounted = true;
+  window.addEventListener("focus", refreshClientContext);
+  window.addEventListener("online", refreshClientContext);
+  document.addEventListener("visibilitychange", refreshClientContext);
+});
+onBeforeUnmount(() => {
+  mounted = false;
+  window.removeEventListener("focus", refreshClientContext);
+  window.removeEventListener("online", refreshClientContext);
+  document.removeEventListener("visibilitychange", refreshClientContext);
 });
 </script>
 

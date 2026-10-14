@@ -1,11 +1,18 @@
-import { DOMWrapper, flushPromises, mount } from "@vue/test-utils";
+import {
+  DOMWrapper,
+  enableAutoUnmount,
+  flushPromises,
+  mount,
+} from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
 import { createI18n } from "vue-i18n";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/types";
 import { useConfigStore } from "../src/store/config";
 import ConsoleApplicationBar from "../src/views/layout/ConsoleApplicationBar.vue";
+
+enableAutoUnmount(afterEach);
 
 const accessEntry = vi.hoisted(() => ({ load: vi.fn() }));
 
@@ -101,6 +108,251 @@ describe("ConsoleApplicationBar", () => {
     expect(content).not.toBeNull();
     return new DOMWrapper(content!);
   };
+
+  it.each([true, false, null, undefined])(
+    "applies smart LAN detection (%s) to both navigation surfaces",
+    async (clientIsLan) => {
+      accessEntry.load.mockResolvedValue({ port: "27999", clientIsLan });
+      const store = useConfigStore();
+      const cfg = hostConfig("");
+      cfg.run_type = 1;
+      cfg.reverse_proxy_submode = "subdomain";
+      cfg.default_tunnel = "frp";
+      cfg.gateway_portal.smart_lan_detection = true;
+      cfg.gateway_portal.navigation_mode = "lan";
+      cfg.host_mappings[0]!.target =
+        "http://192.168.1.20:3000/base?tab=1#photos";
+      store.config = cfg;
+      const wrapper = mount(ConsoleApplicationBar, {
+        global: { plugins: [i18n] },
+      });
+      await flushPromises();
+      const expected =
+        clientIsLan === true
+          ? cfg.host_mappings[0]!.target
+          : "http://photos.example.test:27999/";
+      expect(wrapper.get("ul a").attributes("href")).toBe(expected);
+      const dialog = await openDialog(wrapper);
+      expect(dialog.get("a").attributes("href")).toBe(expected);
+      wrapper.unmount();
+    },
+  );
+
+  it.each(["focus", "online", "visibilitychange", "dialog"])(
+    "refreshes a stale LAN decision on %s",
+    async (event) => {
+      accessEntry.load.mockResolvedValue({ port: "27999", clientIsLan: true });
+      const cfg = hostConfig("");
+      cfg.gateway_portal.smart_lan_detection = true;
+      cfg.host_mappings[0]!.target = "http://192.168.1.20:3000/";
+      useConfigStore().config = cfg;
+      const wrapper = mount(ConsoleApplicationBar, {
+        global: { plugins: [i18n] },
+      });
+      await flushPromises();
+      expect(wrapper.get("ul a").attributes("href")).toBe(
+        cfg.host_mappings[0]!.target,
+      );
+      accessEntry.load.mockResolvedValue({ port: "27999", clientIsLan: false });
+      if (event === "dialog") await openDialog(wrapper);
+      else if (event === "visibilitychange")
+        document.dispatchEvent(new Event(event));
+      else window.dispatchEvent(new Event(event));
+      await flushPromises();
+      expect(wrapper.get("ul a").attributes("href")).toBe(
+        "http://photos.example.test:27999/",
+      );
+    },
+  );
+
+  it("supersedes an in-flight LAN decision when the network changes", async () => {
+    let finishOld!: (value: { port: string; clientIsLan: boolean }) => void;
+    accessEntry.load.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
+    );
+    const cfg = hostConfig("");
+    cfg.gateway_portal.smart_lan_detection = true;
+    cfg.host_mappings[0]!.target = "http://192.168.1.20:3000/";
+    useConfigStore().config = cfg;
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    accessEntry.load.mockResolvedValue({ port: "27999", clientIsLan: false });
+    window.dispatchEvent(new Event("online"));
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flushPromises();
+    expect(accessEntry.load).toHaveBeenCalledTimes(2);
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      "http://photos.example.test:27999/",
+    );
+    finishOld({ port: "7999", clientIsLan: true });
+    await flushPromises();
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      "http://photos.example.test:27999/",
+    );
+  });
+
+  it("does not refresh for a hidden, disabled or unmounted navigation bar", async () => {
+    const store = useConfigStore();
+    const cfg = hostConfig("");
+    cfg.gateway_portal.smart_lan_detection = false;
+    store.config = cfg;
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    accessEntry.load.mockClear();
+    window.dispatchEvent(new Event("online"));
+    await flushPromises();
+    expect(accessEntry.load).not.toHaveBeenCalled();
+    store.config!.gateway_portal.smart_lan_detection = true;
+    await flushPromises();
+    accessEntry.load.mockClear();
+    const visibility = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockReturnValue("hidden");
+    window.dispatchEvent(new Event("online"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flushPromises();
+    expect(accessEntry.load).not.toHaveBeenCalled();
+    visibility.mockReturnValue("visible");
+    store.config!.dashboard_display.show_console_app_list = false;
+    await nextTick();
+    window.dispatchEvent(new Event("focus"));
+    await flushPromises();
+    expect(accessEntry.load).not.toHaveBeenCalled();
+    store.config!.dashboard_display.show_console_app_list = true;
+    await flushPromises();
+    accessEntry.load.mockClear();
+    window.dispatchEvent(new Event("focus"));
+    wrapper.unmount();
+    await flushPromises();
+    window.dispatchEvent(new Event("online"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flushPromises();
+    expect(accessEntry.load).not.toHaveBeenCalled();
+    visibility.mockRestore();
+  });
+
+  it("drops the previous LAN decision after a failed network refresh", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    accessEntry.load.mockResolvedValue({ port: "27999", clientIsLan: true });
+    const cfg = hostConfig("");
+    cfg.gateway_portal.smart_lan_detection = true;
+    cfg.subdomain_mode = {
+      public_http_port: 27999,
+    } as AppConfig["subdomain_mode"];
+    cfg.host_mappings[0]!.target = "http://192.168.1.20:3000/";
+    useConfigStore().config = cfg;
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      cfg.host_mappings[0]!.target,
+    );
+    accessEntry.load.mockRejectedValue(new Error("offline"));
+    window.dispatchEvent(new Event("online"));
+    await flushPromises();
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      "http://photos.example.test:27999/",
+    );
+    warning.mockRestore();
+  });
+
+  it("keeps a valid LAN decision when the independent gateway port is malformed", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    accessEntry.load.mockResolvedValue({ port: "invalid", clientIsLan: true });
+    const cfg = hostConfig("");
+    cfg.gateway_portal.smart_lan_detection = true;
+    cfg.host_mappings[0]!.target = "http://192.168.1.20:3000/";
+    useConfigStore().config = cfg;
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      cfg.host_mappings[0]!.target,
+    );
+    warning.mockRestore();
+  });
+
+  it("updates path links immediately after portal configuration changes", async () => {
+    const store = useConfigStore();
+    const cfg = pathConfig();
+    cfg.gateway_portal = {
+      ...hostConfig("").gateway_portal,
+      navigation_mode: "internet",
+      smart_lan_detection: false,
+    };
+    store.config = cfg;
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    await flushPromises();
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      "http://172.28.0.10:7999/photos/",
+    );
+    store.config!.gateway_portal.navigation_mode = "lan";
+    await nextTick();
+    expect(wrapper.get("ul a").attributes("href")).toBe("http://photos:3000/");
+    accessEntry.load.mockResolvedValue({ port: "7999", clientIsLan: false });
+    store.config!.gateway_portal.smart_lan_detection = true;
+    await flushPromises();
+    expect(accessEntry.load).toHaveBeenCalledTimes(2);
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      "http://172.28.0.10:7999/photos/",
+    );
+    wrapper.unmount();
+  });
+
+  it("ignores stale LAN decisions after the tunnel changes and falls back on errors", async () => {
+    let finishOld!: (value: { port: string; clientIsLan: boolean }) => void;
+    accessEntry.load.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
+    );
+    const store = useConfigStore();
+    const cfg = hostConfig("");
+    cfg.gateway_portal.smart_lan_detection = true;
+    cfg.subdomain_mode = {
+      public_http_port: 27999,
+    } as AppConfig["subdomain_mode"];
+    cfg.host_mappings[0]!.target = "http://192.168.1.20:3000/";
+    store.config = cfg;
+    const wrapper = mount(ConsoleApplicationBar, {
+      global: { plugins: [i18n] },
+    });
+    accessEntry.load.mockResolvedValue({ port: "27999", clientIsLan: false });
+    store.config!.default_tunnel = "frp";
+    await flushPromises();
+    finishOld({ port: "7999", clientIsLan: true });
+    await flushPromises();
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      "http://photos.example.test:27999/",
+    );
+    accessEntry.load.mockResolvedValue({ port: "27999", clientIsLan: true });
+    store.config!.default_tunnel = "cloudflared";
+    await flushPromises();
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      cfg.host_mappings[0]!.target,
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    accessEntry.load.mockRejectedValue(new Error("unavailable"));
+    store.config!.default_tunnel = "frp";
+    await flushPromises();
+    expect(wrapper.get("ul a").attributes("href")).toBe(
+      "http://photos.example.test:27999/",
+    );
+    wrapper.unmount();
+    vi.restoreAllMocks();
+  });
 
   it("opens an application dialog with a responsive new-tab application grid", async () => {
     const store = useConfigStore();

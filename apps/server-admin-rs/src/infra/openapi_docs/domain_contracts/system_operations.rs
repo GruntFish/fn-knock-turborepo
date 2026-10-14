@@ -190,6 +190,8 @@ pub(super) struct AccessEntryData {
     env: String,
     port: String,
     is_default: bool,
+    /// Whether the resolved visitor address is private/ULA/CGNAT. Unknown uses the public entry.
+    client_is_lan: Option<bool>,
 }
 
 #[derive(Serialize, ToSchema)]

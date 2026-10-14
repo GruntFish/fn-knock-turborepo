@@ -1,5 +1,9 @@
 import type { AppConfig, DeploymentTarget, HostMapping } from "@/types";
 import {
+  resolveGatewayPortalTargetHref,
+  usesGatewayPortalLanNavigation,
+} from "@/lib/gateway-portal-navigation";
+import {
   isAnySubdomainRoutingMode,
   normalizePublicAccessEntryPort,
   resolveExplicitPublicAccessEntryPort,
@@ -185,25 +189,37 @@ const resolveHostIcon = (mapping: HostMapping, config: AppConfig): string => {
 
 export const buildConsoleApplicationItems = ({
   accessEntryPort,
+  clientIsLan,
   config,
   location,
 }: {
   accessEntryPort: string;
+  clientIsLan?: boolean | null;
   config: AppConfig;
   location: ConsoleApplicationLocation;
 }): ConsoleApplicationItem[] => {
+  const useLan = usesGatewayPortalLanNavigation(
+    config.gateway_portal,
+    clientIsLan,
+  );
   const hostMappings = orderHostMappings(
     getEligibleHostMappings(config),
     config,
   );
   if (hostMappings.length > 0) {
     const hostItems = hostMappings.flatMap((mapping) => {
-      const href = buildConsoleHostApplicationHref(
-        normalizeText(mapping.host),
-        location,
-        config,
-        accessEntryPort,
-      );
+      const directHref =
+        useLan && (!mapping.target_type || mapping.target_type === "proxy")
+          ? resolveGatewayPortalTargetHref(mapping.target)
+          : "";
+      const href =
+        directHref ||
+        buildConsoleHostApplicationHref(
+          normalizeText(mapping.host),
+          location,
+          config,
+          accessEntryPort,
+        );
       if (!href) return [];
       return [
         {
@@ -222,12 +238,9 @@ export const buildConsoleApplicationItems = ({
   return config.proxy_mappings.flatMap((mapping) => {
     const path = normalizeText(mapping.path);
     if (!path) return [];
-    const href = buildConsolePathApplicationHref(
-      path,
-      location,
-      config,
-      accessEntryPort,
-    );
+    const href =
+      (useLan ? resolveGatewayPortalTargetHref(mapping.target) : "") ||
+      buildConsolePathApplicationHref(path, location, config, accessEntryPort);
     if (!href) return [];
     return [
       {

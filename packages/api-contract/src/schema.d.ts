@@ -7647,6 +7647,8 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         AccessEntryData: {
+            /** @description Whether the resolved visitor address is private/ULA/CGNAT. Unknown uses the public entry. */
+            clientIsLan?: boolean | null;
             /** @enum {string} */
             env: "GO_REPROXY_PORT" | "FRP_REMOTE_PORT";
             isDefault: boolean;

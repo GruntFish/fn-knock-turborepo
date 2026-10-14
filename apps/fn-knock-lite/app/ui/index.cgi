@@ -140,6 +140,13 @@ fi
 
 set -- -s
 
+# REMOTE_ADDR comes from the CGI server, unlike browser-supplied forwarding
+# headers. Preserve it across the loopback hop for portal LAN navigation.
+case "${REMOTE_ADDR:-}" in
+    ''|*[!0-9a-fA-F:.]*) ;;
+    *) set -- "$@" -H "x-real-ip: $REMOTE_ADDR" ;;
+esac
+
 [ -n "$HTTP_X_TIMESTAMP" ]      && set -- "$@" -H "x-timestamp: $HTTP_X_TIMESTAMP"
 [ -n "$HTTP_X_NONCE" ]          && set -- "$@" -H "x-nonce: $HTTP_X_NONCE"
 [ -n "$HTTP_X_SIGNATURE" ]      && set -- "$@" -H "x-signature: $HTTP_X_SIGNATURE"

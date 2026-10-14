@@ -687,3 +687,70 @@ describe("console application list", () => {
     });
   }
 });
+
+describe("console application portal navigation", () => {
+  for (const pathMode of [false, true]) {
+    it(`uses the target URL for ${pathMode ? "path" : "host"} mappings only when portal LAN rules allow it`, () => {
+      const target = "http://192.168.1.20:3000/base?tab=1#photos";
+      const cfg = config({
+        run_type: pathMode ? 0 : 3,
+        host_mappings: [hostMapping("photos.example.test", { target })],
+        proxy_mappings: [
+          { path: "/photos", target },
+        ] as AppConfig["proxy_mappings"],
+      });
+      const build = (clientIsLan?: boolean | null, port = "27999") =>
+        buildConsoleApplicationItems({
+          config: cfg,
+          location,
+          accessEntryPort: port,
+          clientIsLan,
+        })[0]?.href;
+      const gatewayHref = pathMode
+        ? "https://nas.example.test:27999/photos/"
+        : "https://photos.example.test:27999/";
+      assert.equal(build(true), gatewayHref);
+      cfg.gateway_portal.navigation_mode = "lan";
+      assert.equal(build(false), target);
+      assert.equal(build(undefined, ""), target);
+      cfg.gateway_portal.smart_lan_detection = true;
+      assert.equal(build(true), target);
+      for (const client of [false, null, undefined])
+        assert.equal(build(client), gatewayHref);
+      cfg.gateway_portal.navigation_mode = "internet";
+      assert.equal(build(true), target);
+      cfg.gateway_portal.smart_lan_detection = false;
+      assert.equal(build(true), gatewayHref);
+    });
+  }
+
+  it("falls back to public gateway for loopback and static hosts while preserving eligibility", () => {
+    const cfg = config({
+      host_mappings: [
+        hostMapping("loopback.example.test", {
+          target: "http://127.0.0.1:3000",
+        }),
+        hostMapping("static.example.test", {
+          target_type: "directory",
+          target: "http://192.168.1.1:3000",
+        }),
+        hostMapping("disabled.example.test", { disabled: true }),
+        hostMapping("auth.example.test", { service_role: "auth" }),
+      ],
+    });
+    cfg.gateway_portal.smart_lan_detection = true;
+    const items = buildConsoleApplicationItems({
+      config: cfg,
+      location,
+      accessEntryPort: "27999",
+      clientIsLan: true,
+    });
+    assert.deepEqual(
+      items.map((item) => item.href),
+      [
+        "https://loopback.example.test:27999/",
+        "https://static.example.test:27999/",
+      ],
+    );
+  });
+});

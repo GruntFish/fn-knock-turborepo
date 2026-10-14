@@ -3,6 +3,13 @@
     "schemas": {
       "AccessEntryData": {
         "properties": {
+          "clientIsLan": {
+            "description": "Whether the resolved visitor address is private/ULA/CGNAT. Unknown uses the public entry.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "env": {
             "enum": [
               "GO_REPROXY_PORT",
