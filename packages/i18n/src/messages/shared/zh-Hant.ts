@@ -91,7 +91,21 @@ export const zhHantShared = {
     pageSizeOption: "{count} 條",
   },
   dnsCredentialBridge: {
+    title: "憑據建議填入",
+    description:
+      "選擇已儲存的來源，僅補齊空白欄位。填入後需儲存目前表單；重用金鑰不代表已驗證服務權限。",
+    loading: "正在尋找可重用的憑據…",
+    loadError: "部分憑據來源載入失敗，已載入的來源仍可使用。",
+    retry: "重試",
+    source: "憑據來源",
+    chooseSource: "請選擇一個來源",
+    conflict:
+      "現有欄位與此來源不相容：{fields}。請核對並清空衝突欄位後再填入。",
+    fill: "從 {source} 填入空白欄位",
+    applied: "已填入 {count} 個欄位，請儲存目前表單。",
     providers: {
+      esa: "阿里雲 ESA",
+      baiducloud: "百度智慧雲",
       cloudflare: "Cloudflare",
       alidns: "阿里雲 DNS",
       dnspod: "DNSPod",

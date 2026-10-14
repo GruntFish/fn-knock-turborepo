@@ -27,7 +27,6 @@ import { useDDNSPolling } from "./useDDNSPolling";
 import { useDDNSResourceLoading } from "./useDDNSResourceLoading";
 import { useDDNSSettingsDialogs } from "./useDDNSSettingsDialogs";
 import { useDDNSStatus } from "./useDDNSStatus";
-import { useDDNSCredentialTransferHint } from "./useDDNSCredentialTransferHint";
 import { useDDNSPrimaryConfigState } from "./useDDNSPrimaryConfigState";
 import { useDDNSStatusPresentation } from "./useDDNSStatusPresentation";
 
@@ -253,18 +252,6 @@ export const useDDNSManagementPage = () => {
     selectedProvider,
   });
   const {
-    applyCredentialTransfer,
-    credentialTransferDescription,
-    credentialTransferSuggestion,
-    isTransferSourceLoading,
-    transferSourceScopeLabel,
-  } = useDDNSCredentialTransferHint({
-    enableFieldEditing,
-    providerConfig,
-    selectedProvider,
-    translate: (key, params) => (params ? t(key, params) : t(key)),
-  });
-  const {
     copyIpAddress,
     getTargetLastCheckTooltipLines,
     lastCheckTooltipLines,
@@ -276,7 +263,7 @@ export const useDDNSManagementPage = () => {
     translate: (key, params) => (params ? t(key, params) : t(key)),
     updateIntervalMinutes,
   });
-  const { initialize, isLoading, loadConfig, loadStatus } =
+  const { initialize, isLoading, isLoadingConfig, loadConfig, loadStatus } =
     useDDNSResourceLoading({
       applyStatus,
       currentProviderDef,
@@ -444,7 +431,11 @@ export const useDDNSManagementPage = () => {
     validate: validateCommonConfig,
   });
   const isProviderSelectDisabled = computed(
-    () => isSaving.value || isTesting.value || isLoading.value,
+    () =>
+      isSaving.value ||
+      isTesting.value ||
+      isLoading.value ||
+      isLoadingConfig.value,
   );
 
   async function onTest() {
@@ -493,7 +484,6 @@ export const useDDNSManagementPage = () => {
   });
 
   return {
-    applyCredentialTransfer,
     configuredNetworkInterface,
     configuredNetworkInterfaceLabel,
     confirmClearPrimaryConfig,
@@ -501,8 +491,6 @@ export const useDDNSManagementPage = () => {
     confirmationDialogOpen,
     confirmationDialogOptions,
     copyIpAddress,
-    credentialTransferDescription,
-    credentialTransferSuggestion,
     currentIpSourceLabel,
     currentNetworkInterfaceLabel,
     currentProviderDef,
@@ -545,7 +533,6 @@ export const useDDNSManagementPage = () => {
     isTargetFieldVisible,
     isTesting,
     isTestingPublicCheckSources,
-    isTransferSourceLoading,
     lastCheck,
     lastCheckTooltipLines,
     lastIP,
@@ -608,7 +595,6 @@ export const useDDNSManagementPage = () => {
     toggleFieldVisibility,
     toggleTargetFieldVisibility,
     togglingTargetId,
-    transferSourceScopeLabel,
     updateConfiguredIpSource,
     updateConfiguredNetworkInterface,
     updateIntervalDraft,

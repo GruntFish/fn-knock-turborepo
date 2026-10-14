@@ -99,7 +99,22 @@ export const jaJPShared = {
     pageSizeOption: "{count} 件",
   },
   dnsCredentialBridge: {
+    title: "認証情報の入力候補",
+    description:
+      "保存済みの入力元を選び、空欄のみを補完します。入力後はフォームを保存してください。認証情報の再利用はサービス権限の確認を意味しません。",
+    loading: "保存済みの認証情報を検索中…",
+    loadError:
+      "一部の認証情報を読み込めませんでした。読み込み済みの入力元は使用できます。",
+    retry: "再試行",
+    source: "認証情報の入力元",
+    chooseSource: "入力元を選択",
+    conflict:
+      "既存の項目がこの入力元と一致しません：{fields}。確認して競合する項目を空にしてから入力してください。",
+    fill: "{source} から空欄を入力",
+    applied: "{count} 項目を入力しました。フォームを保存してください。",
     providers: {
+      esa: "Alibaba Cloud ESA",
+      baiducloud: "Baidu Cloud",
       cloudflare: "Cloudflare",
       alidns: "Alibaba Cloud DNS",
       dnspod: "DNSPod",

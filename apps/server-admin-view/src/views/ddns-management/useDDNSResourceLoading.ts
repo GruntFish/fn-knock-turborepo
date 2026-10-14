@@ -70,7 +70,7 @@ export const useDDNSResourceLoading = ({
       );
     },
   });
-  const { run: runLoadConfig } = useAsyncAction({
+  const { isPending: isLoadingConfig, run: runLoadConfig } = useAsyncAction({
     onError: (error) => {
       console.error(
         "loadConfig:",
@@ -155,6 +155,7 @@ export const useDDNSResourceLoading = ({
   return {
     initialize,
     isLoading,
+    isLoadingConfig,
     loadConfig,
     loadStatus,
   };

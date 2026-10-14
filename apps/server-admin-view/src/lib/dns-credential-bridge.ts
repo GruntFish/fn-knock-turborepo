@@ -1,223 +1,159 @@
 export type DnsCredentialTarget = "acme" | "ddns";
 
-type DnsCredentialMapping = {
-  from: string;
-  to: string;
-};
-
-type DnsCredentialBridgeDefinition = {
+type CredentialFieldPair = { acme: string; ddns: string; context?: boolean };
+export type DnsCredentialBridgeDefinition = {
   id: string;
   labelKey: string;
   acmeDnsType: string;
   ddnsProvider: string;
-  acmeToDdns: DnsCredentialMapping[];
-  ddnsToAcme: DnsCredentialMapping[];
+  fields: CredentialFieldPair[];
 };
-
 export type DnsCredentialTransferField = {
   sourceKey: string;
   targetKey: string;
   value: string;
 };
-
 export type DnsCredentialTransferSuggestion = {
   bridgeId: string;
   bridgeLabel: string;
   fillableFields: DnsCredentialTransferField[];
+  conflictingFields: string[];
   patch: Record<string, string>;
 };
 
-const dnsCredentialBridgeDefinitions: DnsCredentialBridgeDefinition[] = [
-  {
-    id: "cloudflare",
-    labelKey: "shared.dnsCredentialBridge.providers.cloudflare",
-    acmeDnsType: "dns_cf",
-    ddnsProvider: "cloudflare",
-    acmeToDdns: [
-      { from: "CF_Token", to: "api_token" },
-      { from: "CF_Zone_ID", to: "zone_id" },
-    ],
-    ddnsToAcme: [
-      { from: "api_token", to: "CF_Token" },
-      { from: "zone_id", to: "CF_Zone_ID" },
-    ],
-  },
-  {
-    id: "alidns",
-    labelKey: "shared.dnsCredentialBridge.providers.alidns",
-    acmeDnsType: "dns_ali",
-    ddnsProvider: "alidns",
-    acmeToDdns: [
-      { from: "Ali_Key", to: "access_key_id" },
-      { from: "Ali_Secret", to: "access_key_secret" },
-    ],
-    ddnsToAcme: [
-      { from: "access_key_id", to: "Ali_Key" },
-      { from: "access_key_secret", to: "Ali_Secret" },
-    ],
-  },
-  {
-    id: "dnspod",
-    labelKey: "shared.dnsCredentialBridge.providers.dnspod",
-    acmeDnsType: "dns_dp",
-    ddnsProvider: "dnspod",
-    acmeToDdns: [
-      { from: "DP_Id", to: "token_id" },
-      { from: "DP_Key", to: "token_key" },
-    ],
-    ddnsToAcme: [
-      { from: "token_id", to: "DP_Id" },
-      { from: "token_key", to: "DP_Key" },
-    ],
-  },
-  {
-    id: "tencentcloud",
-    labelKey: "shared.dnsCredentialBridge.providers.tencentcloud",
-    acmeDnsType: "dns_tencent",
-    ddnsProvider: "tencentcloud",
-    acmeToDdns: [
-      { from: "Tencent_SecretId", to: "secret_id" },
-      { from: "Tencent_SecretKey", to: "secret_key" },
-    ],
-    ddnsToAcme: [
-      { from: "secret_id", to: "Tencent_SecretId" },
-      { from: "secret_key", to: "Tencent_SecretKey" },
-    ],
-  },
-  {
-    id: "edgeone",
-    labelKey: "shared.dnsCredentialBridge.providers.edgeone",
-    acmeDnsType: "dns_tencent",
-    ddnsProvider: "edgeone",
-    acmeToDdns: [
-      { from: "Tencent_SecretId", to: "secret_id" },
-      { from: "Tencent_SecretKey", to: "secret_key" },
-    ],
-    ddnsToAcme: [
-      { from: "secret_id", to: "Tencent_SecretId" },
-      { from: "secret_key", to: "Tencent_SecretKey" },
-    ],
-  },
-  {
-    id: "edgeone_cname",
-    labelKey: "shared.dnsCredentialBridge.providers.edgeoneCname",
-    acmeDnsType: "dns_tencent",
-    ddnsProvider: "edgeone_cname",
-    acmeToDdns: [
-      { from: "Tencent_SecretId", to: "secret_id" },
-      { from: "Tencent_SecretKey", to: "secret_key" },
-    ],
-    ddnsToAcme: [
-      { from: "secret_id", to: "Tencent_SecretId" },
-      { from: "secret_key", to: "Tencent_SecretKey" },
-    ],
-  },
-  {
-    id: "godaddy",
-    labelKey: "shared.dnsCredentialBridge.providers.godaddy",
-    acmeDnsType: "dns_gd",
-    ddnsProvider: "godaddy",
-    acmeToDdns: [
-      { from: "GD_Key", to: "api_key" },
-      { from: "GD_Secret", to: "api_secret" },
-    ],
-    ddnsToAcme: [
-      { from: "api_key", to: "GD_Key" },
-      { from: "api_secret", to: "GD_Secret" },
-    ],
-  },
-  {
-    id: "porkbun",
-    labelKey: "shared.dnsCredentialBridge.providers.porkbun",
-    acmeDnsType: "dns_porkbun",
-    ddnsProvider: "porkbun",
-    acmeToDdns: [
-      { from: "PORKBUN_API_KEY", to: "api_key" },
-      { from: "PORKBUN_SECRET_API_KEY", to: "secret_api_key" },
-    ],
-    ddnsToAcme: [
-      { from: "api_key", to: "PORKBUN_API_KEY" },
-      { from: "secret_api_key", to: "PORKBUN_SECRET_API_KEY" },
-    ],
-  },
-  {
-    id: "dynv6",
-    labelKey: "shared.dnsCredentialBridge.providers.dynv6",
-    acmeDnsType: "dns_dynv6",
-    ddnsProvider: "dynv6",
-    acmeToDdns: [{ from: "DYNV6_TOKEN", to: "token" }],
-    ddnsToAcme: [{ from: "token", to: "DYNV6_TOKEN" }],
-  },
-  {
-    id: "duckdns",
-    labelKey: "shared.dnsCredentialBridge.providers.duckdns",
-    acmeDnsType: "dns_duckdns",
-    ddnsProvider: "duckdns",
-    acmeToDdns: [{ from: "DuckDNS_Token", to: "token" }],
-    ddnsToAcme: [{ from: "token", to: "DuckDNS_Token" }],
-  },
+const aliyunFields = [
+  { acme: "Ali_Key", ddns: "access_key_id" },
+  { acme: "Ali_Secret", ddns: "access_key_secret" },
+];
+const tencentFields = [
+  { acme: "Tencent_SecretId", ddns: "secret_id" },
+  { acme: "Tencent_SecretKey", ddns: "secret_key" },
+];
+const bridge = (
+  id: string,
+  acmeDnsType: string,
+  fields: CredentialFieldPair[],
+  label = id,
+): DnsCredentialBridgeDefinition => ({
+  id,
+  ddnsProvider: id,
+  acmeDnsType,
+  fields,
+  labelKey: `shared.dnsCredentialBridge.providers.${label}`,
+});
+
+export const dnsCredentialBridgeDefinitions = [
+  bridge("cloudflare", "dns_cf", [
+    { acme: "CF_Token", ddns: "api_token" },
+    { acme: "CF_Zone_ID", ddns: "zone_id", context: true },
+  ]),
+  bridge("alidns", "dns_ali", aliyunFields),
+  bridge("esa", "dns_ali", aliyunFields),
+  bridge("dnspod", "dns_dp", [
+    { acme: "DP_Id", ddns: "token_id" },
+    { acme: "DP_Key", ddns: "token_key" },
+  ]),
+  bridge("tencentcloud", "dns_tencent", tencentFields),
+  bridge("edgeone", "dns_tencent", tencentFields),
+  bridge("edgeone_cname", "dns_tencent", tencentFields, "edgeoneCname"),
+  bridge("godaddy", "dns_gd", [
+    { acme: "GD_Key", ddns: "api_key" },
+    { acme: "GD_Secret", ddns: "api_secret" },
+  ]),
+  bridge("porkbun", "dns_porkbun", [
+    { acme: "PORKBUN_API_KEY", ddns: "api_key" },
+    { acme: "PORKBUN_SECRET_API_KEY", ddns: "secret_api_key" },
+  ]),
+  bridge("dynv6", "dns_dynv6", [{ acme: "DYNV6_TOKEN", ddns: "token" }]),
+  bridge("duckdns", "dns_duckdns", [{ acme: "DuckDNS_Token", ddns: "token" }]),
+  bridge("baiducloud", "dns_baiducloud", [
+    { acme: "BAIDU_ACCESS_KEY_ID", ddns: "access_key_id" },
+    { acme: "BAIDU_SECRET_ACCESS_KEY", ddns: "secret_access_key" },
+  ]),
 ];
 
-const normalizeValue = (value: string | null | undefined) =>
-  value?.trim() || "";
-
-export const resolveDnsCredentialBridge = (
+export const resolveDnsCredentialBridges = (
   target: DnsCredentialTarget,
   providerId: string,
-) => {
-  const normalizedProviderId = providerId.trim();
-  if (!normalizedProviderId) return null;
-
-  return (
-    dnsCredentialBridgeDefinitions.find((bridge) =>
-      target === "acme"
-        ? bridge.acmeDnsType === normalizedProviderId
-        : bridge.ddnsProvider === normalizedProviderId,
-    ) || null
+) =>
+  dnsCredentialBridgeDefinitions.filter(
+    (item) =>
+      (target === "acme" ? item.acmeDnsType : item.ddnsProvider) ===
+      providerId.trim(),
   );
-};
 
 export const buildDnsCredentialTransferSuggestion = ({
   target,
   providerId,
+  sourceProviderId,
   sourceCredentials,
   targetCredentials,
   translateBridgeLabel,
 }: {
   target: DnsCredentialTarget;
   providerId: string;
+  sourceProviderId: string;
   sourceCredentials: Record<string, string>;
   targetCredentials: Record<string, string>;
   translateBridgeLabel?: (key: string) => string;
 }): DnsCredentialTransferSuggestion | null => {
-  const bridge = resolveDnsCredentialBridge(target, providerId);
-  if (!bridge) return null;
-
-  const mappings = target === "acme" ? bridge.ddnsToAcme : bridge.acmeToDdns;
-  const fillableFields = mappings.flatMap((mapping) => {
-    const sourceValue = normalizeValue(sourceCredentials[mapping.from]);
-    if (!sourceValue) return [];
-
-    const existingTargetValue = normalizeValue(targetCredentials[mapping.to]);
-    if (existingTargetValue) return [];
-
-    return [
-      {
-        sourceKey: mapping.from,
-        targetKey: mapping.to,
-        value: sourceValue,
-      },
-    ];
-  });
-
-  if (fillableFields.length === 0) return null;
-
+  const match = resolveDnsCredentialBridges(target, providerId).find(
+    (item) =>
+      (target === "acme" ? item.ddnsProvider : item.acmeDnsType) ===
+      sourceProviderId,
+  );
+  if (!match) return null;
+  const mappings = match.fields.map((field) => ({
+    sourceKey: target === "acme" ? field.ddns : field.acme,
+    targetKey: target === "acme" ? field.acme : field.ddns,
+    context: field.context,
+  }));
+  // A zone identifier alone is not a reusable authentication scheme.
+  if (
+    !mappings.some(
+      (field) => !field.context && sourceCredentials[field.sourceKey]?.trim(),
+    )
+  ) {
+    return null;
+  }
+  const fillableFields: DnsCredentialTransferField[] = [];
+  const conflictingFields: string[] = [];
+  for (const field of mappings) {
+    const value = sourceCredentials[field.sourceKey]?.trim() || "";
+    const existing = targetCredentials[field.targetKey]?.trim() || "";
+    // For authentication pairs, an absent source value cannot establish account identity.
+    if (existing && existing !== value && (!field.context || value)) {
+      conflictingFields.push(field.targetKey);
+    }
+    if (value && !existing) {
+      fillableFields.push({
+        sourceKey: field.sourceKey,
+        targetKey: field.targetKey,
+        value,
+      });
+    }
+  }
+  if (target === "acme") {
+    const alternateKeys =
+      providerId === "dns_cf"
+        ? ["CF_Key", "CF_Email"]
+        : providerId === "dns_dynv6"
+          ? ["KEY"]
+          : [];
+    conflictingFields.push(
+      ...alternateKeys.filter((key) => targetCredentials[key]?.trim()),
+    );
+  }
+  if (!fillableFields.length) return null;
   return {
-    bridgeId: bridge.id,
-    bridgeLabel: translateBridgeLabel?.(bridge.labelKey) ?? bridge.labelKey,
+    bridgeId: match.id,
+    bridgeLabel: translateBridgeLabel?.(match.labelKey) ?? match.labelKey,
     fillableFields,
-    patch: Object.fromEntries(
-      fillableFields.map((field) => [field.targetKey, field.value]),
-    ),
+    conflictingFields,
+    patch: conflictingFields.length
+      ? {}
+      : Object.fromEntries(
+          fillableFields.map((field) => [field.targetKey, field.value]),
+        ),
   };
 };

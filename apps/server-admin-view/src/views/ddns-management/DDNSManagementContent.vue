@@ -17,7 +17,6 @@ import type { DDNSManagementPageController } from "./useDDNSManagementPage";
 
 const props = defineProps<{ controller: DDNSManagementPageController }>();
 const {
-  applyCredentialTransfer,
   configuredNetworkInterface,
   configuredNetworkInterfaceLabel,
   confirmClearPrimaryConfig,
@@ -25,8 +24,6 @@ const {
   confirmationDialogOpen,
   confirmationDialogOptions,
   copyIpAddress,
-  credentialTransferDescription,
-  credentialTransferSuggestion,
   currentIpSourceLabel,
   currentNetworkInterfaceLabel,
   currentProviderDef,
@@ -69,7 +66,6 @@ const {
   isTargetFieldVisible,
   isTesting,
   isTestingPublicCheckSources,
-  isTransferSourceLoading,
   lastCheck,
   lastCheckTooltipLines,
   lastIP,
@@ -132,7 +128,6 @@ const {
   toggleFieldVisibility,
   toggleTargetFieldVisibility,
   togglingTargetId,
-  transferSourceScopeLabel,
   updateConfiguredIpSource,
   updateConfiguredNetworkInterface,
   updateIntervalDraft,
@@ -189,8 +184,6 @@ const {
       :configured="hasProviderConfig"
       :configured-network-interface="configuredNetworkInterface"
       :configured-network-interface-label="configuredNetworkInterfaceLabel"
-      :credential-transfer-description="credentialTransferDescription"
-      :credential-transfer-suggestion="credentialTransferSuggestion"
       :enable-field-editing="enableFieldEditing"
       :field-visibility="fieldVisibility"
       :format-option-label="formatOptionLabel"
@@ -210,7 +203,6 @@ const {
       :is-provider-select-disabled="isProviderSelectDisabled"
       :is-saving="isSaving"
       :is-testing="isTesting"
-      :is-transfer-source-loading="isTransferSourceLoading"
       :is-update-scope-option-disabled="isProviderUpdateScopeOptionDisabled"
       :provider-config="providerConfig"
       :provider-def="currentProviderDef"
@@ -228,10 +220,8 @@ const {
       :show-static-i-pv4-input="showStaticIPv4Input"
       :show-static-i-pv6-input="showStaticIPv6Input"
       :toggle-field-visibility="toggleFieldVisibility"
-      :transfer-source-scope-label="transferSourceScopeLabel"
       :update-ip-source="updateConfiguredIpSource"
       :update-network-interface="updateConfiguredNetworkInterface"
-      @apply-credential-transfer="applyCredentialTransfer"
       @cancel="onCancelPrimaryConfigEdit"
       @clear-primary-config="openClearPrimaryConfigDialog"
       @provider-change="onProviderChange"

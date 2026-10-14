@@ -5,8 +5,6 @@ import {
   type AcmeApplicationRecord,
   type AcmeDnsProvider,
 } from "@/lib/api/acme";
-import { useDnsCredentialTransfer } from "@/composables/useDnsCredentialTransfer";
-import { toast } from "@admin-shared/utils/toast";
 import {
   buildAcmeCredentialsPayload,
   getProviderCredentialFields,
@@ -157,27 +155,6 @@ export const useAcmeApplicationForm = (
   const isCredentialEditReady = (key: string) =>
     credentialEditReady.value[getCredentialStateKey(key)] === true;
 
-  const {
-    applySuggestion: applyTransferredCredentials,
-    isLoadingSource: isTransferSourceLoading,
-    sourceScopeLabel: transferSourceScopeLabel,
-    suggestion: credentialTransferSuggestion,
-  } = useDnsCredentialTransfer({
-    target: "acme",
-    providerId: activeDnsType,
-    targetCredentials: credentials,
-  });
-
-  const credentialTransferDescription = computed(() => {
-    const suggestion = credentialTransferSuggestion.value;
-    if (!suggestion) return "";
-    return t("admin.acmeApplicationDialog.transferDescription", {
-      source: transferSourceScopeLabel.value,
-      bridge: suggestion.bridgeLabel,
-      count: suggestion.fillableFields.length,
-    });
-  });
-
   const canSubmit = computed(() => {
     if (!domains.value.length) return false;
     if (fileOutputEnabled.value && !fileOutputDirectory.value.trim())
@@ -222,16 +199,9 @@ export const useAcmeApplicationForm = (
     });
   };
 
-  const applyCredentialTransfer = () => {
-    const result = applyTransferredCredentials();
-    if (!result) return;
-    for (const key of result.appliedKeys) enableCredentialEditing(key);
-    toast.success(
-      t("admin.acmeApplicationDialog.transferApplied", {
-        source: transferSourceScopeLabel.value,
-        count: result.count,
-      }),
-    );
+  const applyCredentialTransfer = (patch: Record<string, string>) => {
+    credentials.value = { ...credentials.value, ...patch };
+    for (const key of Object.keys(patch)) enableCredentialEditing(key);
   };
 
   watch(
@@ -258,8 +228,6 @@ export const useAcmeApplicationForm = (
     applyCredentialTransfer,
     canSubmit,
     credentialSummary,
-    credentialTransferDescription,
-    credentialTransferSuggestion,
     credentials,
     dialogTitle,
     dnsType,
@@ -270,13 +238,11 @@ export const useAcmeApplicationForm = (
     hasMultipleCredentialSchemes,
     isCredentialEditReady,
     isCredentialsVisible,
-    isTransferSourceLoading,
     name,
     renewEnabled,
     fileOutputEnabled,
     fileOutputDirectory,
     submit,
     t,
-    transferSourceScopeLabel,
   };
 };

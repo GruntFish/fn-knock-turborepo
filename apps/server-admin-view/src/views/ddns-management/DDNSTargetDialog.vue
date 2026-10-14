@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CredentialTransferHint from "@/components/CredentialTransferHint.vue";
 import { useI18n } from "vue-i18n";
 import { RefreshCw } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
@@ -98,9 +99,16 @@ const { t } = useI18n();
             :should-show-static-block="shouldShowStaticBlock"
             :state="state"
             :update-scope="updateScope"
-            @update:network-interface="
-              emit('update:networkInterface', $event)
-            "
+            @update:network-interface="emit('update:networkInterface', $event)"
+          />
+          <CredentialTransferHint
+            class="m-4 sm:m-5"
+            target="ddns"
+            :provider-id="state.provider"
+            :credentials="state.config"
+            :active="open"
+            :disabled="isSaving"
+            @apply="Object.assign(state.config, $event)"
           />
           <DDNSTargetProviderFields
             v-if="providerDef"

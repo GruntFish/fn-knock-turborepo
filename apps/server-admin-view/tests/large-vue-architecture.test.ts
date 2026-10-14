@@ -763,7 +763,12 @@ describe("large Vue architecture", () => {
     assert.match(ddnsControllerSource, /useDDNSPolling/u);
     assert.match(ddnsControllerSource, /useDDNSPrimaryConfigActions/u);
     assert.match(ddnsControllerSource, /useDDNSPrimaryConfigState/u);
-    assert.match(ddnsControllerSource, /useDDNSCredentialTransferHint/u);
+    assert.doesNotMatch(ddnsControllerSource, /useDnsCredentialTransfer/u);
+    assert.match(
+      readSource("../src/views/ddns-management/DDNSProviderCredentialsFields.vue"),
+      /CredentialTransferHint/u,
+    );
+    assert.match(ddnsTargetDialogSource, /CredentialTransferHint/u);
     assert.match(ddnsControllerSource, /useDDNSStatusPresentation/u);
     assert.match(ddnsControllerSource, /DDNSAPI|onBeforeRouteLeave/u);
     assert.match(ddnsContentSource, /DDNSPrimaryConfigCard/u);

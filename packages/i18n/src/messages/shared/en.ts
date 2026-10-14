@@ -96,7 +96,22 @@ export const enShared = {
     pageSizeOption: "{count} rows",
   },
   dnsCredentialBridge: {
+    title: "Suggested credentials",
+    description:
+      "Choose a saved source to fill empty fields. Save this form to keep the changes. Reusing credentials does not verify service permissions.",
+    loading: "Looking for saved credentials…",
+    loadError:
+      "Some credential sources could not be loaded. Successfully loaded sources are still available.",
+    retry: "Retry",
+    source: "Credential source",
+    chooseSource: "Choose a source",
+    conflict:
+      "Existing fields are incompatible with this source: {fields}. Check and clear the conflicting fields before filling.",
+    fill: "Fill empty fields from {source}",
+    applied: "Filled {count} fields. Save this form to keep the changes.",
     providers: {
+      esa: "Alibaba Cloud ESA",
+      baiducloud: "Baidu Cloud",
       cloudflare: "Cloudflare",
       alidns: "Alibaba Cloud DNS",
       dnspod: "DNSPod",

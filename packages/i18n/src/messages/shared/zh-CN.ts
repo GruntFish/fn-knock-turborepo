@@ -91,7 +91,21 @@ export const zhCNShared = {
     pageSizeOption: "{count} 条",
   },
   dnsCredentialBridge: {
+    title: "凭据建议填充",
+    description:
+      "选择已保存的来源，仅补齐空字段。填入后需保存当前表单；复用密钥不代表已验证服务权限。",
+    loading: "正在查找可复用的凭据…",
+    loadError: "部分凭据来源加载失败，已加载的来源仍可使用。",
+    retry: "重试",
+    source: "凭据来源",
+    chooseSource: "请选择一个来源",
+    conflict:
+      "已有字段与此来源不兼容：{fields}。请核对并清空冲突字段后再填入。",
+    fill: "从 {source} 填入空字段",
+    applied: "已填入 {count} 个字段，请保存当前表单。",
     providers: {
+      esa: "阿里云 ESA",
+      baiducloud: "百度智能云",
       cloudflare: "Cloudflare",
       alidns: "阿里云 DNS",
       dnspod: "DNSPod",

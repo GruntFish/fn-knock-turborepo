@@ -122,20 +122,11 @@
 
           <div class="grid gap-3">
             <CredentialTransferHint
-              v-if="credentialTransferSuggestion"
-              :action-label="
-                t('admin.acmeApplicationDialog.fillFromSource', {
-                  source: transferSourceScopeLabel,
-                })
-              "
-              :description="credentialTransferDescription"
-              :fields="
-                credentialTransferSuggestion.fillableFields.map(
-                  (field) => field.targetKey,
-                )
-              "
-              :loading="isTransferSourceLoading"
-              :source-label="`${transferSourceScopeLabel} · ${credentialTransferSuggestion.bridgeLabel}`"
+              target="acme"
+              :provider-id="activeDnsType"
+              :credentials="credentials"
+              :active="props.open"
+              :disabled="props.pending || props.runtimeLocked"
               @apply="applyCredentialTransfer"
             />
 
@@ -305,8 +296,6 @@ const {
   applyCredentialTransfer,
   canSubmit,
   credentialSummary,
-  credentialTransferDescription,
-  credentialTransferSuggestion,
   credentials,
   dialogTitle,
   dnsType,
@@ -317,13 +306,11 @@ const {
   hasMultipleCredentialSchemes,
   isCredentialEditReady,
   isCredentialsVisible,
-  isTransferSourceLoading,
   name,
   renewEnabled,
   fileOutputEnabled,
   fileOutputDirectory,
   submit,
   t,
-  transferSourceScopeLabel,
 } = useAcmeApplicationForm(props, emit);
 </script>

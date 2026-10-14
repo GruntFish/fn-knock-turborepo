@@ -27,7 +27,6 @@ import {
 import ConfigCollapsibleCard from "@admin-shared/components/ConfigCollapsibleCard.vue";
 import FloatingActionDock from "@admin-shared/components/common/FloatingActionDock.vue";
 import { type DDNSNetworkInterfacePayload } from "@/lib/api/ddns";
-import type { DnsCredentialTransferSuggestion } from "@/lib/dns-credential-bridge";
 import type {
   DDNSAddressOption,
   DDNSIpSource,
@@ -43,8 +42,6 @@ defineProps<{
   configured: boolean;
   configuredNetworkInterface: string;
   configuredNetworkInterfaceLabel: string;
-  credentialTransferDescription: string;
-  credentialTransferSuggestion: DnsCredentialTransferSuggestion | null;
   enableFieldEditing: (key: string) => void;
   fieldVisibility: Record<string, boolean>;
   formatDomainField: () => void;
@@ -68,7 +65,6 @@ defineProps<{
   isProviderSelectDisabled: boolean;
   isSaving: boolean;
   isTesting: boolean;
-  isTransferSourceLoading: boolean;
   isUpdateScopeOptionDisabled: (
     providerName: string,
     option: DDNSUpdateScope,
@@ -88,13 +84,11 @@ defineProps<{
   showStaticIPv4Input: boolean;
   showStaticIPv6Input: boolean;
   toggleFieldVisibility: (key: string) => void;
-  transferSourceScopeLabel: string;
   updateIpSource: (value: string) => void;
   updateNetworkInterface: (value: string) => void;
 }>();
 
 const emit = defineEmits<{
-  applyCredentialTransfer: [];
   cancel: [];
   clearPrimaryConfig: [collapse: () => void];
   providerChange: [provider: string];
@@ -194,8 +188,7 @@ const { t } = useI18n();
         />
 
         <DDNSProviderCredentialsFields
-          :credential-transfer-description="credentialTransferDescription"
-          :credential-transfer-suggestion="credentialTransferSuggestion"
+          :disabled="isProviderSelectDisabled || isClearingPrimaryConfig"
           :enable-field-editing="enableFieldEditing"
           :field-visibility="fieldVisibility"
           :format-domain-field="formatDomainField"
@@ -204,13 +197,10 @@ const { t } = useI18n();
           :get-field-dom-id="getFieldDomId"
           :get-field-input-name="getFieldInputName"
           :is-field-edit-ready="isFieldEditReady"
-          :is-transfer-source-loading="isTransferSourceLoading"
           :provider-config="providerConfig"
           :provider-def="providerDef"
           :set-field-value="setFieldValue"
           :toggle-field-visibility="toggleFieldVisibility"
-          :transfer-source-scope-label="transferSourceScopeLabel"
-          @apply-credential-transfer="emit('applyCredentialTransfer')"
         />
       </div>
     </template>

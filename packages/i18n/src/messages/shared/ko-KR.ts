@@ -98,7 +98,22 @@ export const koKRShared = {
     pageSizeOption: "{count} 행",
   },
   dnsCredentialBridge: {
+    title: "추천 자격 증명",
+    description:
+      "저장된 출처를 선택해 빈 필드만 채웁니다. 변경 사항을 유지하려면 양식을 저장하세요. 자격 증명 재사용은 서비스 권한 확인을 의미하지 않습니다.",
+    loading: "저장된 자격 증명을 찾는 중…",
+    loadError:
+      "일부 자격 증명을 불러오지 못했습니다. 불러온 출처는 계속 사용할 수 있습니다.",
+    retry: "다시 시도",
+    source: "자격 증명 출처",
+    chooseSource: "출처 선택",
+    conflict:
+      "기존 필드가 이 출처와 호환되지 않습니다: {fields}. 충돌하는 필드를 확인하고 비운 후 채우세요.",
+    fill: "{source}에서 빈 필드 채우기",
+    applied: "{count}개 필드를 채웠습니다. 양식을 저장하세요.",
     providers: {
+      esa: "Alibaba Cloud ESA",
+      baiducloud: "Baidu Cloud",
       cloudflare: "Cloudflare",
       alidns: "Alibaba Cloud DNS",
       dnspod: "DNSPod",
