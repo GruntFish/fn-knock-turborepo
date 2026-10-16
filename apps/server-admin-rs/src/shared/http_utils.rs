@@ -3,6 +3,18 @@ use std::net::IpAddr;
 use axum::http::{HeaderMap, HeaderValue, Uri, header};
 use url::Url;
 
+/// Internal auth-to-gateway signal. Only routing fallbacks may set this;
+/// a matched endpoint returning a business 404 must remain a normal response.
+pub(crate) fn auth_route_not_found(
+    mut response: axum::response::Response,
+) -> axum::response::Response {
+    response.headers_mut().insert(
+        "x-fn-knock-auth-route-unmatched",
+        HeaderValue::from_static("1"),
+    );
+    response
+}
+
 pub fn get_client_ip(headers: &HeaderMap) -> String {
     for name in [
         "x-forwarded-for",

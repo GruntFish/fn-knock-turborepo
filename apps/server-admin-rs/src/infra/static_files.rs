@@ -291,14 +291,24 @@ pub async fn auth_fallback(State(state): State<AppState>, req: Request<Body>) ->
             translator.t("server.authRoutes.pathNotFound"),
         );
         crate::http_utils::apply_no_store_headers(response.headers_mut());
-        return response;
+        return crate::http_utils::auth_route_not_found(response);
     }
     if req.method() != Method::GET && req.method() != Method::HEAD {
-        return method_not_allowed();
+        let matched = is_known_auth_view_path(&path)
+            || auth_asset_path(&state.settings.auth_static_path, &path).is_some_and(|asset| {
+                asset == state.settings.auth_static_path.join("index.html")
+                    || state.static_files.auth.get(&asset).is_some()
+            });
+        let response = method_not_allowed();
+        return if matched {
+            response
+        } else {
+            crate::http_utils::auth_route_not_found(response)
+        };
     }
 
     let Some(asset_path) = auth_asset_path(&state.settings.auth_static_path, &path) else {
-        return not_found();
+        return crate::http_utils::auth_route_not_found(not_found());
     };
     // All paths resolving to the entry document must use the same base and
     // no-store handling, including aliases such as /auth/./index.html.
@@ -315,11 +325,11 @@ pub async fn auth_fallback(State(state): State<AppState>, req: Request<Body>) ->
         )
         .await
     } else if is_asset_request_path(&normalized_path) {
-        static_asset_not_found()
+        crate::http_utils::auth_route_not_found(static_asset_not_found())
     } else if is_known_auth_view_path(&path) {
         serve_auth_index(&state, &path, req.headers(), req.method()).await
     } else {
-        auth_not_found_html()
+        crate::http_utils::auth_route_not_found(auth_not_found_html())
     }
 }
 

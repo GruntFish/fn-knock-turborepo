@@ -2,10 +2,10 @@ use super::*;
 
 pub(super) async fn auth_api_not_found() -> Response {
     let translator = Translator::new(crate::i18n::DEFAULT_LOCALE);
-    response::error(
+    http_utils::auth_route_not_found(response::error(
         StatusCode::NOT_FOUND,
         auth_route_text(&translator, "pathNotFound"),
-    )
+    ))
 }
 
 pub(super) async fn bootstrap(

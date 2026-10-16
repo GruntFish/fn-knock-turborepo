@@ -482,6 +482,9 @@ mod tests {
         settings.sqlite_path = directory.path().join("fn-knock.sqlite3");
         settings.auth_static_path = directory.path().join("auth-static");
         std::fs::create_dir_all(&settings.auth_static_path).unwrap();
+        let assets = settings.auth_static_path.join("assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::write(assets.join("app.js"), "console.log('auth');").unwrap();
         std::fs::write(
             settings.auth_static_path.join("index.html"),
             "<base id=\"auth-app-base\" href=\"/\" /><script src=\"./assets/app.js\"></script>",
@@ -495,6 +498,91 @@ mod tests {
             .await
             .expect("auth router test state");
         (directory, state)
+    }
+
+    #[tokio::test]
+    async fn auth_unmatched_routes_signal_gateway_without_marking_valid_routes() {
+        let (_directory, state) = auth_router_test_state("").await;
+        let app = auth_router(state);
+        for path in [
+            "/not-a-route",
+            "/auth/not-a-route",
+            "/__auth__/not-a-route",
+            "/assets/missing.js",
+            "/api/auth/not-a-route",
+            "/auth/api/auth/not-a-route",
+            "/__auth__/api/auth/not-a-route",
+            "/api/not-a-route",
+        ] {
+            for method in [Method::GET, Method::HEAD, Method::POST, Method::OPTIONS] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method.clone())
+                            .uri(path)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let status =
+                    if method != Method::GET && method != Method::HEAD && !path.contains("/api/") {
+                        StatusCode::METHOD_NOT_ALLOWED
+                    } else {
+                        StatusCode::NOT_FOUND
+                    };
+                assert_eq!(response.status(), status, "{method} {path}");
+                assert_eq!(
+                    response.headers()["x-fn-knock-auth-route-unmatched"],
+                    "1",
+                    "{path}"
+                );
+            }
+        }
+        for (method, path, status) in [
+            (Method::GET, "/login", StatusCode::OK),
+            (Method::GET, "/auth/login", StatusCode::OK),
+            (Method::GET, "/__auth__/login", StatusCode::OK),
+            (
+                Method::GET,
+                "/api/auth/oidc/invite?token=nonexistent-invite",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                Method::POST,
+                "/api/auth/oidc/invite",
+                StatusCode::METHOD_NOT_ALLOWED,
+            ),
+            (Method::GET, "/auth/assets/app.js", StatusCode::OK),
+            (Method::HEAD, "/__auth__/assets/app.js", StatusCode::OK),
+            (
+                Method::POST,
+                "/auth/assets/app.js",
+                StatusCode::METHOD_NOT_ALLOWED,
+            ),
+            (Method::POST, "/auth/login", StatusCode::METHOD_NOT_ALLOWED),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("x-fn-knock-auth-route-unmatched", "1")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+            assert!(
+                !response
+                    .headers()
+                    .contains_key("x-fn-knock-auth-route-unmatched"),
+                "{path}"
+            );
+        }
     }
 
     #[tokio::test]
