@@ -5,7 +5,7 @@
     "author": "kci-lnk",
     "homepage": "https://github.com/kci-lnk/fn-knock-turborepo",
     "description": "fn-knock 官方 fnOS 原生 FPK 应用源。",
-    "updated_at": "2026-10-12T02:50:29Z"
+    "updated_at": "2026-10-16T19:43:46Z"
   },
   "apps": {
     "fn-knock": {
@@ -28,23 +28,23 @@
       "license": "MIT",
       "install_type": "root",
       "service_port": 7999,
-      "icon_url": "https://raw.githubusercontent.com/kci-lnk/fn-knock-turborepo/v2.5.3/apps/fn-knock/ICON_256.PNG",
-      "readme_url": "https://raw.githubusercontent.com/kci-lnk/fn-knock-turborepo/v2.5.3/README.md",
-      "updated_at": "2026-10-12T02:50:29Z",
+      "icon_url": "https://raw.githubusercontent.com/kci-lnk/fn-knock-turborepo/v2.5.4/apps/fn-knock/ICON_256.PNG",
+      "readme_url": "https://raw.githubusercontent.com/kci-lnk/fn-knock-turborepo/v2.5.4/README.md",
+      "updated_at": "2026-10-16T19:43:46Z",
       "releases": {
-        "2.5.3": {
-          "changelog": "# fn-knock 2.5.3\n\n- 请求日志支持按日期范围查询（最多 30 天），可按访问时间正序或倒序排列，并支持从日志中将 IP 加入黑名单，方便定位和处理异常访问。\n- 优化请求日志的按 IP 聚合视图，统一时间显示，支持查看指定 IP 在所选日期范围内的请求。\n- 系统设置->网关新增「禁用域名后行为」设置，可选择显示阻止页面或直接阻断连接；该设置仅影响手动禁用的子域名，不改变非允许访问时段的提示。\n- 优化网页终端的输入队列、光标与画面渲染，减少连续输入时的积压和显示延迟，并共享资源轮询以减少重复请求。\n- 修复运行健康监测可能停滞的问题，完善异常事件的持久化与保留，便于排查运行故障。\n- Windows 版证书客户端升级至 v0.1.2，新增西部数码 DNS 验证支持。\n- 加强 Windows 安装与升级的数据快照校验和回滚保护；恢复失败时保留恢复快照，降低安装异常时的数据丢失风险。\n- Windows 版新增存储离线诊断命令，完善服务启动错误与安装日志；对不可重试的存储错误停止自动恢复，其他连续故障最多自动重启三次，避免无限重启。\n- 完善 Windows 安装恢复、存储诊断及真实安装包的自动化发布检查。\n- 修复 fnOS 证书同步时的文件权限保留问题，完善失败恢复和错误诊断，避免同步后证书无法被相关服务读取。\n",
-          "updated_at": "2026-10-12T02:50:29Z",
+        "2.5.4": {
+          "changelog": "# fn-knock 2.5.4\n\n- 系统设置中的网关配置新增「映射选择页」开关，可控制是否允许通过 `/__select__` 查看映射入口；关闭后，相关请求按未匹配路由策略处理。\n- 修复退出登录后使用 Passkey 再次登录时的跳转问题，保留正确的登录目标与导航状态。\n- 修复认证服务未匹配路由的处理，使网关能够对这些请求一致应用未匹配路由策略。\n- 加强代理映射目标地址校验，在前后端拒绝格式错误的目标，并完善输入提示。\n- 完善 DDNS 与 ACME 证书申请之间的 DNS 凭据双向复用提示，减少重复填写配置。\n- 修复控制台应用入口链接的生成，正确使用公网网关配置，并应用门户的局域网导航规则。\n- 完善 fnOS 证书同步失败后的批次恢复，恢复时同步核对并修复网关映射，保护共享证书索引引用，避免误清理仍被使用的证书记录。\n- 更新内置 acme.sh 组件。\n",
+          "updated_at": "2026-10-16T19:43:46Z",
           "packages": {
             "x86": {
-              "download_url": "https://github.com/kci-lnk/fn-knock-turborepo/releases/download/v2.5.3/fn-knock-2.5.3-fnos-amd64.fpk",
-              "sha256": "6e991114ac80dd5a6f656b4b2e378d14f6b4ef4e7c97ccb6bab151abb1d199a9",
-              "size": 30446358
+              "download_url": "https://github.com/kci-lnk/fn-knock-turborepo/releases/download/v2.5.4/fn-knock-2.5.4-fnos-amd64.fpk",
+              "sha256": "553c8ebe8f93339db98bc604f39ed03f23f52ce475165b7e828ea5b9ba14c298",
+              "size": 30525576
             },
             "arm": {
-              "download_url": "https://github.com/kci-lnk/fn-knock-turborepo/releases/download/v2.5.3/fn-knock-2.5.3-fnos-arm64.fpk",
-              "sha256": "6c98b9c7e163461d03ee7964539b80c880f83dede6936cd7401883c3b41c77c5",
-              "size": 29364600
+              "download_url": "https://github.com/kci-lnk/fn-knock-turborepo/releases/download/v2.5.4/fn-knock-2.5.4-fnos-arm64.fpk",
+              "sha256": "6acf04a29059c852643466975e63766622a05043e6989c2f097727903c7751de",
+              "size": 29454870
             }
           }
         }
