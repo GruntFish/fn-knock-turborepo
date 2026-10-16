@@ -119,6 +119,8 @@ export const zhHantShared = {
     },
   },
   proxyTargetInputField: {
+    invalidTarget:
+      "請輸入有效的 IP 或主機名稱，可附帶連接埠和路徑，例如 127.0.0.1:8080/music/；不能只填寫路徑。",
     hint: "左側選擇協議，右側填寫 IP 和端口；未填寫端口時會按協議默認端口自動補齊。",
     suggestionsLabel: "目標地址候選",
   },

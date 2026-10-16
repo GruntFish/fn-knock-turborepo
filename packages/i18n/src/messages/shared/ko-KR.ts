@@ -127,6 +127,8 @@ export const koKRShared = {
     },
   },
   proxyTargetInputField: {
+    invalidTarget:
+      "유효한 IP 주소 또는 호스트 이름을 입력하세요. 포트와 경로를 포함할 수 있습니다(예: 127.0.0.1:8080/music/). 경로만 입력할 수는 없습니다.",
     hint: "왼쪽에서 프로토콜을 선택하고 오른쪽에서 IP와 포트를 입력하세요. 포트를 생략하면 프로토콜 기본 포트로 자동 채워집니다.",
     suggestionsLabel: "대상 주소 제안",
   },

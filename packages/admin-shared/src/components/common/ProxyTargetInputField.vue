@@ -15,7 +15,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useProxyTargetInput } from "@admin-shared/composables/useProxyTargetInput";
-import { PROXY_TARGET_PROTOCOLS } from "@admin-shared/utils/proxyTargetInput";
+import {
+  isSupportedProxyTargetUrl,
+  PROXY_TARGET_PROTOCOLS,
+} from "@admin-shared/utils/proxyTargetInput";
 
 type Props = {
   defaultPort?: string;
@@ -56,6 +59,11 @@ const { protocol, endpoint, normalize } = useProxyTargetInput(modelValue, {
 });
 const hintText = computed(
   () => props.hint ?? t("shared.proxyTargetInputField.hint"),
+);
+const targetError = computed(() =>
+  modelValue.value.trim() && !isSupportedProxyTargetUrl(modelValue.value)
+    ? t("shared.proxyTargetInputField.invalidTarget")
+    : "",
 );
 const resolvedSuggestionsLabel = computed(
   () =>
@@ -168,6 +176,10 @@ defineExpose({
               v-model="endpoint"
               :disabled="disabled"
               :placeholder="placeholder"
+              :aria-invalid="Boolean(targetError)"
+              :aria-describedby="
+                targetError ? `${inputId}-error` : `${inputId}-hint`
+              "
               role="combobox"
               aria-autocomplete="list"
               :aria-expanded="shouldShowSuggestions"
@@ -215,7 +227,19 @@ defineExpose({
         </PopoverContent>
       </Popover>
     </div>
-    <p v-if="hintText" class="text-xs text-muted-foreground">
+    <p
+      v-if="targetError"
+      :id="`${inputId}-error`"
+      role="alert"
+      class="text-xs text-destructive"
+    >
+      {{ targetError }}
+    </p>
+    <p
+      v-if="hintText"
+      :id="`${inputId}-hint`"
+      class="text-xs text-muted-foreground"
+    >
       {{ hintText }}
     </p>
   </div>

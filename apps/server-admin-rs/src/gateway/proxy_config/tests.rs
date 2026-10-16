@@ -45,6 +45,74 @@ fn validates_supported_proxy_target_urls() {
     assert!(!is_supported_proxy_target_url("ftp://example.com"));
     assert!(!is_supported_proxy_target_url("http://example.com:"));
     assert!(!is_supported_proxy_target_url("http://"));
+    for target in [
+        "http://localhost/music/",
+        "https://nas.local:8443/music/",
+        "ws://[::1]:8080/socket",
+        "wss://example.com/socket?token=abc",
+    ] {
+        assert!(is_supported_proxy_target_url(target), "{target}");
+    }
+    for target in [
+        "/music/",
+        "http:///music/",
+        "https:////music/",
+        "ws:///music/",
+        "wss:///music/",
+        "http:music/",
+        "http:/music/",
+        "http:/music://host",
+        "http:music://host",
+        "http://./music/",
+        "http://../music/",
+        "http://?query=music",
+        "http://#music",
+        r"http://\music/",
+        "http://local\nhost/music/",
+        "http://localhost:abc/music/",
+        "http://localhost:65536/music/",
+    ] {
+        assert!(!is_supported_proxy_target_url(target), "{target:?}");
+    }
+}
+
+#[test]
+fn rejects_path_only_proxy_targets_in_all_mapping_writes() {
+    for target in [
+        "http:///music/",
+        "https:////music/",
+        "ws:///music/",
+        "wss:///music/",
+    ] {
+        assert_eq!(
+            normalize_proxy_mappings(vec![json!({
+                "path": "/music", "target": target
+            })])
+            .unwrap_err(),
+            "Proxy mapping target must be a supported HTTP/WebSocket URL"
+        );
+        assert_eq!(
+            normalize_host_mappings_for_route(
+                vec![json!({
+                    "host": "music.example.com", "target": target
+                })],
+                &json!({})
+            )
+            .unwrap_err(),
+            "Host mapping music.example.com target must be a supported HTTP/WebSocket URL"
+        );
+        assert_eq!(
+            normalize_host_mappings_for_route(
+                vec![json!({
+                    "host": "music.example.com", "target": "http://localhost:8080",
+                    "locations": [{"path": "/music", "action": "proxy", "target": target}]
+                })],
+                &json!({})
+            )
+            .unwrap_err(),
+            "Host mapping music.example.com location /music target must be a supported HTTP/WebSocket URL"
+        );
+    }
 }
 
 #[test]

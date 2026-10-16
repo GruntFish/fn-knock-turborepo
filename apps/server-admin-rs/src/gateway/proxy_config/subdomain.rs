@@ -185,13 +185,30 @@ pub(super) fn is_supported_proxy_target_url(value: &str) -> bool {
     if target.is_empty() || has_explicit_empty_port(target) {
         return false;
     }
+    // Url::parse repairs inputs such as http:///music/ into http://music/.
+    // Require an explicit authority before parsing, and reject characters
+    // that the parser would silently strip or reinterpret as separators.
+    let Some((scheme, endpoint)) = target.split_once("://") else {
+        return false;
+    };
+    if !matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "http" | "https" | "ws" | "wss"
+    ) || endpoint.is_empty()
+        || endpoint.starts_with(['/', '?', '#'])
+        || target
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control() || ch == '\\')
+    {
+        return false;
+    }
     let Ok(parsed) = Url::parse(target) else {
         return false;
     };
     matches!(parsed.scheme(), "http" | "https" | "ws" | "wss")
         && parsed
             .host_str()
-            .is_some_and(|host| !host.trim().is_empty())
+            .is_some_and(|host| !host.trim().is_empty() && host.chars().any(|ch| ch != '.'))
 }
 
 pub(super) fn has_explicit_empty_port(value: &str) -> bool {

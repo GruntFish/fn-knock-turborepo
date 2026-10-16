@@ -125,6 +125,8 @@ export const enShared = {
     },
   },
   proxyTargetInputField: {
+    invalidTarget:
+      "Enter a valid IP address or hostname, optionally with a port and path, such as 127.0.0.1:8080/music/. A path alone is not valid.",
     hint: "Choose the protocol on the left, then enter the IP and port on the right. If the port is omitted, it is filled from the protocol default on blur.",
     suggestionsLabel: "Target address suggestions",
   },

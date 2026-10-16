@@ -1,6 +1,9 @@
 import { computed, reactive, ref, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { isWebSocketProxyTargetUrl } from "@admin-shared/utils/proxyTargetInput";
+import {
+  isSupportedProxyTargetUrl,
+  isWebSocketProxyTargetUrl,
+} from "@admin-shared/utils/proxyTargetInput";
 import { toast } from "@admin-shared/utils/toast";
 import type { HostLocation, HostLocationAction } from "@/types";
 import {
@@ -91,6 +94,9 @@ export const useGatewayLocationEditor = (options: {
     }
     if (form.action === "proxy" && !form.target.trim()) {
       return t("admin.gatewayLocationsSettings.proxyTargetRequired");
+    }
+    if (form.action === "proxy" && !isSupportedProxyTargetUrl(form.target)) {
+      return t("shared.proxyTargetInputField.invalidTarget");
     }
     if (form.action !== "response") return "";
 

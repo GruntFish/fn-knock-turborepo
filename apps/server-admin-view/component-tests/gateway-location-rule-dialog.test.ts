@@ -35,6 +35,11 @@ const createTestI18n = () =>
             target: "Target",
           },
         },
+        shared: {
+          proxyTargetInputField: {
+            invalidTarget: "Enter a valid IP address or hostname.",
+          },
+        },
       },
     },
   });
@@ -73,6 +78,37 @@ const selectStubs = {
 };
 
 describe("gateway location rule dialog sections", () => {
+  it("does not persist a path-only proxy target and accepts a corrected upstream", async () => {
+    const draftLocations = ref<HostLocation[]>([]);
+    const persistLocations = vi.fn(async () => true);
+    let editor!: ReturnType<typeof useGatewayLocationEditor>;
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          editor = useGatewayLocationEditor({
+            draftLocations,
+            persistLocations,
+          });
+          return () => h("div");
+        },
+      }),
+      { global: { plugins: [createTestI18n()] } },
+    );
+    editor.openCreateDialog();
+    editor.form.path = "/music";
+    editor.form.target = "http:///music/";
+    expect(editor.formError.value).toBe(
+      "Enter a valid IP address or hostname.",
+    );
+    await editor.saveDialogLocation();
+    expect(persistLocations).not.toHaveBeenCalled();
+    expect(draftLocations.value).toEqual([]);
+    editor.form.target = "http://localhost:8080/music/";
+    await editor.saveDialogLocation();
+    expect(persistLocations).toHaveBeenCalledOnce();
+    wrapper.unmount();
+  });
+
   it("places match mode first and updates path semantics without clearing input", async () => {
     const form = reactive(createDefaultLocationForm());
     form.path = "/api/status";

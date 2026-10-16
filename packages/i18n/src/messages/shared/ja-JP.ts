@@ -128,6 +128,8 @@ export const jaJPShared = {
     },
   },
   proxyTargetInputField: {
+    invalidTarget:
+      "有効な IP アドレスまたはホスト名を入力してください。ポートとパスも指定できます（例: 127.0.0.1:8080/music/）。パスのみは指定できません。",
     hint: "左側でプロトコルを選び、右側に IP アドレスとポートを入力します。ポートを省略すると、フォーカスを外したときにプロトコルのデフォルト値が補完されます。",
     suggestionsLabel: "転送先アドレスの候補",
   },

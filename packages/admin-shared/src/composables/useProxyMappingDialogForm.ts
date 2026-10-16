@@ -1,5 +1,6 @@
-import { computed, reactive, ref } from 'vue';
-import type { ProxyMappingFields } from '@admin-shared/utils/proxyMapping';
+import { computed, reactive, ref } from "vue";
+import type { ProxyMappingFields } from "@admin-shared/utils/proxyMapping";
+import { isSupportedProxyTargetUrl } from "@admin-shared/utils/proxyTargetInput";
 
 type ProxyMappingFormValue = ProxyMappingFields & {
   rewrite_html: boolean;
@@ -8,25 +9,36 @@ type ProxyMappingFormValue = ProxyMappingFields & {
   strip_path: boolean;
 };
 
-type ProxyMappingEditable = ProxyMappingFields & Partial<Pick<ProxyMappingFormValue, 'rewrite_html' | 'use_auth' | 'use_root_mode' | 'strip_path'>>;
+type ProxyMappingEditable = ProxyMappingFields &
+  Partial<
+    Pick<
+      ProxyMappingFormValue,
+      "rewrite_html" | "use_auth" | "use_root_mode" | "strip_path"
+    >
+  >;
 
 export const useProxyMappingDialogForm = <T extends ProxyMappingEditable>(
-  defaultFlags: Pick<ProxyMappingFormValue, 'rewrite_html' | 'use_auth' | 'use_root_mode' | 'strip_path'>,
+  defaultFlags: Pick<
+    ProxyMappingFormValue,
+    "rewrite_html" | "use_auth" | "use_root_mode" | "strip_path"
+  >,
 ) => {
   const open = ref(false);
   const isEditing = ref(false);
   const editingOriginal = ref<T | null>(null);
   const form = reactive<ProxyMappingFormValue>({
-    path: '',
-    target: '',
+    path: "",
+    target: "",
     ...defaultFlags,
   });
 
-  const isValid = computed(() => form.path.trim() !== '' && form.target.trim() !== '');
+  const isValid = computed(
+    () => form.path.trim() !== "" && isSupportedProxyTargetUrl(form.target),
+  );
 
   const resetForm = () => {
-    form.path = '';
-    form.target = '';
+    form.path = "";
+    form.target = "";
     form.rewrite_html = defaultFlags.rewrite_html;
     form.use_auth = defaultFlags.use_auth;
     form.use_root_mode = defaultFlags.use_root_mode;

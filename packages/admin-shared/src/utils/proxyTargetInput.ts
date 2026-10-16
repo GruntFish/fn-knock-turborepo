@@ -38,8 +38,7 @@ const hasExplicitEmptyPort = (value: string): boolean => {
 
   const [, , endpoint = ""] = match;
   const firstSuffixIndex = endpoint.search(/[/?#]/);
-  const boundary =
-    firstSuffixIndex === -1 ? endpoint.length : firstSuffixIndex;
+  const boundary = firstSuffixIndex === -1 ? endpoint.length : firstSuffixIndex;
   const authorityWithCredentials = endpoint.slice(0, boundary);
   const authority = authorityWithCredentials.slice(
     authorityWithCredentials.lastIndexOf("@") + 1,
@@ -179,6 +178,8 @@ export const normalizeProxyTargetInput = (
   defaultPort?: string,
 ) => {
   const resolved = resolveProxyTargetInput(selectedProtocol, endpointInput);
+  // Do not repair malformed input while adding a default port.
+  if (!isSupportedProxyTargetUrl(resolved.target)) return resolved;
   const endpoint = ensureProxyTargetPort(
     resolved.endpoint,
     getDefaultProxyTargetPort(resolved.protocol, defaultPort),
@@ -194,12 +195,19 @@ export const normalizeProxyTargetInput = (
 export const isSupportedProxyTargetUrl = (value: string): boolean => {
   const target = value.trim();
   if (!target) return false;
+  // URL parsers repair missing authorities (http:///music/ -> http://music/).
+  // Validate the original authority before allowing that normalization.
+  const match = target.match(TARGET_PROTOCOL_PATTERN);
+  if (!match || !match[2] || /^[/?#]/.test(match[2])) return false;
+  if (/[\s\p{Cc}\\]/u.test(target)) return false;
   if (hasExplicitEmptyPort(target)) return false;
 
   try {
     const parsed = new URL(target);
     return (
-      isProxyTargetProtocol(parsed.protocol) && Boolean(parsed.hostname.trim())
+      isProxyTargetProtocol(parsed.protocol) &&
+      Boolean(parsed.hostname.trim()) &&
+      !/^\.+$/.test(parsed.hostname)
     );
   } catch {
     return false;
@@ -208,8 +216,7 @@ export const isSupportedProxyTargetUrl = (value: string): boolean => {
 
 export const isWebSocketProxyTargetUrl = (value: string): boolean => {
   const target = value.trim();
-  if (!target) return false;
-  if (hasExplicitEmptyPort(target)) return false;
+  if (!isSupportedProxyTargetUrl(target)) return false;
 
   try {
     const parsed = new URL(target);
