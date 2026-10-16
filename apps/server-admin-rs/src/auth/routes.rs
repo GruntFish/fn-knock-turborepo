@@ -82,6 +82,8 @@ const AUTH_IDENTITY_HEADER_ENCODING_PREFIX: &str = "b64:";
 #[derive(Deserialize)]
 struct BootstrapQuery {
     redirect_uri: Option<String>,
+    logged_out: Option<String>,
+    logout_flow: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -252,3 +252,60 @@ describe("auth redirect guard", () => {
     );
   });
 });
+
+describe("logout flow redirect budget", () => {
+  const firstFlow = "ab000000-0000-4000-8000-000000000001";
+  const secondFlow = "ab000000-0000-4000-8000-000000000002";
+  it("allows a new logout to reuse a target but blocks reloads of that flow", () => {
+    const storage = new MemoryStorage();
+    const attempt = (logoutFlow?: string) =>
+      guardAuthAutoRedirect({
+        redirectTo: "https://app.example.com/login",
+        currentUrl: currentLoginUrl,
+        storage,
+        now: 1000,
+        logoutFlow,
+      });
+    assert.equal(attempt(firstFlow).allowed, true);
+    for (const flow of [
+      firstFlow,
+      firstFlow.toUpperCase(),
+      undefined,
+      "invalid",
+    ]) {
+      assert.deepEqual(attempt(flow), {
+        allowed: false,
+        reason: "repeat_redirect",
+      });
+    }
+    assert.equal(attempt(secondFlow).allowed, true);
+    assert.equal(attempt(secondFlow).allowed, false);
+  });
+  it("keeps the hop budget within one flow and resets it for a fresh logout", () => {
+    const storage = new MemoryStorage();
+    const attempt = (index: number, logoutFlow: string) =>
+      guardAuthAutoRedirect({
+        redirectTo: `https://app.example.com/login?nonce=${index}`,
+        currentUrl: currentLoginUrl,
+        storage,
+        now: 1000,
+        logoutFlow,
+      });
+    for (let index = 0; index < 3; index++)
+      assert.equal(attempt(index, firstFlow).allowed, true);
+    assert.equal(attempt(3, firstFlow).allowed, false);
+    assert.equal(attempt(3, secondFlow).allowed, true);
+    for (const redirectTo of [currentLoginUrl, "javascript:alert(1)"]) {
+      assert.equal(
+        guardAuthAutoRedirect({
+          redirectTo,
+          currentUrl: currentLoginUrl,
+          storage,
+          logoutFlow: firstFlow,
+        }).allowed,
+        false,
+      );
+    }
+    assert.equal(attempt(3, secondFlow).allowed, false);
+  });
+});

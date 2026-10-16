@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
@@ -397,6 +398,201 @@ try {
   assert.equal((await login(page)).redirect_to, foreignOrigin + "/");
   console.log(
     "PASS direct shared-auth login opens the foreign service's local login instead of remaining on logged-in AUTH",
+  );
+  await context.close();
+  // A real credential bound on the shared auth origin must remain reachable
+  // after logging out through a service's /__auth__ bridge.
+  await setDomain("");
+  const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  const totp = () => {
+    const counter = Buffer.alloc(8);
+    counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000)));
+    const mac = createHmac("sha1", Buffer.from("12345678901234567890", "ascii"))
+      .update(counter)
+      .digest();
+    const offset = mac.at(-1) & 15;
+    return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(
+      6,
+      "0",
+    );
+  };
+  await api(
+    `/api/admin/auth/accounts/${account.id}/subdomain-access`,
+    { subdomain_access: { mode: "all", hosts: [], streams: [] } },
+    "PATCH",
+  );
+  await api(`/api/admin/auth/accounts/${account.id}/totp/bind`, {
+    secret,
+    token: totp(),
+    comment: "Passkey logout regression",
+  });
+  await api("/api/admin/auth/mode/switch", { mode: "totp" });
+  context = await newContext();
+  page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("WebAuthn.enable");
+  await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options: {
+      protocol: "ctap2",
+      transport: "internal",
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      automaticPresenceSimulation: true,
+    },
+  });
+  await page.goto(
+    authOrigin + "/login?" + new URLSearchParams({ redirect_uri: target }),
+  );
+  await page
+    .locator('altcha-widget input[type="checkbox"]')
+    .or(
+      page.getByRole("button", {
+        name: /我不是机器人|I'm not a robot|I am not a robot/i,
+      }),
+    )
+    .first()
+    .click();
+  await page.locator('input[autocomplete="one-time-code"]').fill(totp());
+  await page.getByRole("button", { name: /立即开启|Enable now/ }).click();
+  await page.waitForURL(target);
+  assert.match(await page.locator("body").innerText(), /single-service-ok/);
+
+  const bootstrapAt = async (origin) => {
+    // Use the browser's DNS rules and current cookies for these local domains.
+    const response = await page.evaluate(async (origin) => {
+      const reply = await fetch(
+        origin + "/__auth__/api/auth/bootstrap?logged_out=1",
+        { cache: "no-store" },
+      );
+      return { status: reply.status, body: await reply.json() };
+    }, origin);
+    assert.equal(response.status, 200);
+    return response.body.data;
+  };
+  const serviceBootstrap = await bootstrapAt(allowedOrigin);
+  assert.equal(serviceBootstrap.passkey.available, false);
+  assert.equal(serviceBootstrap.redirect_kind, "login");
+  assert.equal(
+    new URL(serviceBootstrap.redirect_to).searchParams.get("logged_out"),
+    "1",
+  );
+
+  const logoutResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/__auth__/api/auth/logout",
+  );
+  await page.goto(allowedOrigin + "/__auth__/api/auth/logout");
+  assert.equal((await logoutResponse).status(), 302);
+  await page.waitForURL(
+    (url) =>
+      url.hostname === "auth.abc.com" &&
+      url.pathname === "/login" &&
+      url.searchParams.get("logged_out") === "1",
+  );
+  const passkeyButton = page.getByRole("button", {
+    name: /Passkey 一键登录|Sign in with Passkey/,
+  });
+  await passkeyButton.waitFor({ state: "visible" });
+  const authBootstrap = await bootstrapAt(authOrigin);
+  assert.equal(authBootstrap.passkey.available, true);
+  assert.equal(authBootstrap.redirect_to, undefined);
+  assert.equal(
+    (await context.cookies()).filter((cookie) => cookie.name === cookieName)
+      .length,
+    0,
+  );
+  // The explicit action must be able to finish login despite logged_out=1.
+  await passkeyButton.click();
+  await page.waitForURL(authOrigin + "/");
+  assert.ok(
+    (await context.cookies()).some((cookie) => cookie.name === cookieName),
+  );
+  assert.equal((await page.goto(target)).status(), 200);
+  assert.match(await page.locator("body").innerText(), /single-service-ok/);
+  const logoutFlows = new Set();
+  const recordLogoutFlow = () => {
+    const url = new URL(page.url());
+    assert.equal(url.origin, authOrigin);
+    assert.equal(url.pathname, "/login");
+    assert.equal(url.searchParams.get("logged_out"), "1");
+    const flow = url.searchParams.get("logout_flow");
+    assert.match(flow ?? "", /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/);
+    assert.ok(
+      !logoutFlows.has(flow),
+      "each explicit logout needs a fresh flow",
+    );
+    logoutFlows.add(flow);
+    return flow;
+  };
+  // Exercise the actual Home button: an API client must receive JSON, not HTML.
+  await page.goto(authOrigin + "/");
+  await page
+    .getByRole("button", { name: /退出登录|Sign out/, exact: true })
+    .click();
+  const homeLogoutResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/api/auth/logout"),
+  );
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: /确认退出|Sign out/, exact: true })
+    .click();
+  const homeResponse = await homeLogoutResponse;
+  assert.equal(homeResponse.status(), 200);
+  assert.match(homeResponse.headers()["content-type"], /application\/json/);
+  await page.waitForURL(
+    (url) =>
+      url.pathname === "/login" && url.searchParams.get("logged_out") === "1",
+  );
+  recordLogoutFlow();
+  assert.equal(
+    (await context.cookies()).filter((cookie) => cookie.name === cookieName)
+      .length,
+    0,
+  );
+
+  // Cross-origin sessionStorage survives explicit login. Multiple fresh logout
+  // flows must still migrate immediately, even inside the guard's 30s window.
+  const repeatStarted = Date.now();
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await passkeyButton.click();
+    await page.waitForURL(authOrigin + "/");
+    assert.equal((await page.goto(target)).status(), 200);
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/__auth__/api/auth/logout",
+    );
+    await page.goto(allowedOrigin + "/__auth__/api/auth/logout");
+    const response = await responsePromise;
+    assert.equal(response.status(), 302);
+    const issuedFlow = new URL(
+      response.headers().location,
+      allowedOrigin,
+    ).searchParams.get("logout_flow");
+    await page.waitForURL(
+      (url) => url.hostname === "auth.abc.com" && url.pathname === "/login",
+    );
+    assert.equal(
+      recordLogoutFlow(),
+      issuedFlow,
+      "migration must preserve the same logout flow",
+    );
+    await passkeyButton.waitFor({ state: "visible" });
+    assert.equal(
+      (await context.cookies()).filter((cookie) => cookie.name === cookieName)
+        .length,
+      0,
+    );
+  }
+  assert.ok(
+    Date.now() - repeatStarted < 30_000,
+    "exercise repeated logout within the redirect guard window",
+  );
+  await passkeyButton.click();
+  await page.waitForURL(authOrigin + "/");
+  assert.equal((await page.goto(target)).status(), 200);
+  console.log(
+    "PASS HTTPS virtual Passkey login, Home JSON logout, four repeated service logouts, auth-origin migration, and explicit Passkey re-login",
   );
   await context.close();
 } finally {

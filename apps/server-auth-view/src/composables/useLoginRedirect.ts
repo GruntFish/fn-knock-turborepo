@@ -1,8 +1,12 @@
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
-import type { AuthGrantType } from "@frontend-core/auth/types";
+import type {
+  AuthBootstrapData,
+  AuthGrantType,
+} from "@frontend-core/auth/types";
 import {
   guardAuthAutoRedirect,
+  normalizeLogoutFlow,
   resetAuthAutoRedirectGuard,
   type AuthRedirectBlockReason,
   type RedirectGuardStorage,
@@ -21,6 +25,9 @@ export const useLoginRedirect = ({
       : null;
   const redirectUri = queryParams?.get("redirect_uri") ?? null;
   const suppressAutoRedirect = queryParams?.get("logged_out") === "1";
+  const logoutFlow = suppressAutoRedirect
+    ? normalizeLogoutFlow(queryParams?.get("logout_flow"))
+    : undefined;
   const bootstrapGrantType = ref<AuthGrantType | undefined>();
   const redirectGuardBlockReason = ref<AuthRedirectBlockReason | null>(null);
 
@@ -62,14 +69,21 @@ export const useLoginRedirect = ({
   const navigateAfterBootstrap = async ({
     authenticated,
     redirectTo,
+    redirectKind,
   }: {
     authenticated: boolean;
     redirectTo?: string | null;
+    redirectKind?: AuthBootstrapData["redirect_kind"];
   }) => {
-    if (suppressAutoRedirect) return false;
+    // A login-origin migration is still needed after logout (for example for
+    // auth-host Passkeys). Unknown/old responses remain suppressed.
+    if (suppressAutoRedirect && (redirectKind !== "login" || !redirectTo)) {
+      return false;
+    }
 
     if (redirectTo) {
       const decision = guardAuthAutoRedirect({
+        logoutFlow,
         redirectTo,
         currentUrl: window.location.href,
         storage: getRedirectGuardStorage(),
@@ -116,6 +130,7 @@ export const useLoginRedirect = ({
     bootstrapGrantType,
     completeLogin,
     logoutNotice,
+    logoutFlow,
     navigateAfterBootstrap,
     redirectGuardNotice,
     redirectUri,

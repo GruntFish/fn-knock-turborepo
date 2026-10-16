@@ -30,7 +30,7 @@ async fn bootstrap_scoped(
     let translator = translator_from_config(&crate::auth::request_context::config(&state));
     let client_ip = client_ip_for_auth(&headers);
     enqueue_auth_ip_location(&state, &client_ip, "bootstrap");
-    match build_auth_shell_data(&state, &headers, &uri, query.redirect_uri.as_deref(), true).await {
+    match build_auth_shell_data(&state, &headers, &uri, Some(&query)).await {
         Ok((mut data, access)) => {
             let mut clear_cookie = None;
             let config = crate::auth::request_context::config(&state);
@@ -67,7 +67,7 @@ pub(super) async fn session(
     uri: Uri,
 ) -> Response {
     let translator = Translator::from_state(&state).await;
-    match build_auth_shell_data(&state, &headers, &uri, None, false).await {
+    match build_auth_shell_data(&state, &headers, &uri, None).await {
         Ok((data, access)) => {
             if access.authenticated {
                 let client_ip = client_ip_for_auth(&headers);
@@ -1135,18 +1135,7 @@ pub(super) async fn logout(
     }
 
     let cookie_domains = resolve_cookie_clear_domains(config.as_ref(), &headers);
-    let mut response_builder = Response::builder().status(if grant_revoke_failed {
-        StatusCode::SERVICE_UNAVAILABLE
-    } else {
-        StatusCode::FOUND
-    });
-    if !grant_revoke_failed {
-        response_builder =
-            response_builder.header(header::LOCATION, post_logout_location(&headers, &uri));
-    }
-    let mut response = response_builder
-        .body(axum::body::Body::empty())
-        .unwrap_or_else(|_| Response::new(axum::body::Body::empty()));
+    let mut response = post_logout_response(&headers, &uri, grant_revoke_failed);
     apply_no_store_headers(response.headers_mut());
     for domain in &cookie_domains {
         append_set_cookie_header(

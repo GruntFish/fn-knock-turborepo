@@ -423,10 +423,12 @@ const {
   bootstrapGrantType,
   completeLogin,
   logoutNotice,
+  logoutFlow,
   navigateAfterBootstrap,
   redirectGuardNotice,
   redirectUri,
   resetRedirectGuard,
+  suppressAutoRedirect,
 } = useLoginRedirect({
   translate: (key) => t(key),
 });
@@ -582,6 +584,8 @@ useLoginBootstrap({
   refreshBrowserCapabilities,
   reportError: reportLoginError,
   startLocationPolling,
+  suppressAutoRedirect,
+  logoutFlow,
   translate: (key) => t(key),
 });
 

@@ -127,11 +127,23 @@ export const CaptchaAPI = {
 };
 
 export const AuthAPI = {
-  async getBootstrap(redirectUri?: string | null): Promise<AuthBootstrapData> {
+  async logout(): Promise<{ redirect_to: string }> {
+    const res = await apiClient.get("/logout", {
+      headers: { Accept: "application/json" },
+    });
+    return res.data.data;
+  },
+  async getBootstrap(
+    redirectUri?: string | null,
+    loggedOut = false,
+    logoutFlow?: string,
+  ): Promise<AuthBootstrapData> {
     const res = await apiClient.get("/bootstrap", {
-      params: withNoStoreParams(
-        redirectUri ? { redirect_uri: redirectUri } : undefined,
-      ),
+      params: withNoStoreParams({
+        redirect_uri: redirectUri || undefined,
+        logged_out: loggedOut ? "1" : undefined,
+        logout_flow: loggedOut ? logoutFlow : undefined,
+      }),
     });
     return res.data.data;
   },

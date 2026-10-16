@@ -46,12 +46,11 @@ pub(super) async fn build_auth_shell_data(
     state: &AppState,
     headers: &HeaderMap,
     uri: &Uri,
-    redirect_uri: Option<&str>,
-    include_redirect: bool,
+    bootstrap: Option<&BootstrapQuery>,
 ) -> anyhow::Result<(Value, AuthAccess)> {
     crate::auth::request_context::scope(
         state,
-        build_auth_shell_data_scoped(state, headers, uri, redirect_uri, include_redirect),
+        build_auth_shell_data_scoped(state, headers, uri, bootstrap),
     )
     .await
 }
@@ -60,8 +59,7 @@ async fn build_auth_shell_data_scoped(
     state: &AppState,
     headers: &HeaderMap,
     uri: &Uri,
-    redirect_uri: Option<&str>,
-    include_redirect: bool,
+    bootstrap: Option<&BootstrapQuery>,
 ) -> anyhow::Result<(Value, AuthAccess)> {
     let config = crate::auth::request_context::config(state);
     let captcha_settings = runtime_config::load_captcha_settings_for_authorization(state).await?;
@@ -115,8 +113,13 @@ async fn build_auth_shell_data_scoped(
         "ldap": { "providers": ldap_providers }
     });
 
-    if include_redirect {
-        let redirect_to = if access.authenticated {
+    if let Some(query) = bootstrap {
+        let redirect_uri = query.redirect_uri.as_deref();
+        let logged_out = query.logged_out.as_deref() == Some("1");
+        // Logout suppresses navigation into an authenticated destination, but must
+        // still move to the login origin where the configured methods are usable.
+        let login_redirect = logged_out || !access.authenticated;
+        let redirect_to = if !login_redirect {
             let (session, _) = resolve_presented_browser_session(state, headers, &config).await?;
             let credential = if let Some((_, session)) = session {
                 session_auth_credential(state, &session).await?
@@ -140,11 +143,21 @@ async fn build_auth_shell_data_scoped(
                 )
             }
         } else {
-            service_local_login_for_target(&config, headers, redirect_uri)
-                .or_else(|| resolve_shared_auth_login_redirect(&config, headers, redirect_uri))
+            bootstrap_login_redirect(
+                &config,
+                headers,
+                redirect_uri,
+                logged_out,
+                query.logout_flow.as_deref(),
+            )
         };
         if let Some(value) = redirect_to {
             data["redirect_to"] = Value::String(value);
+            data["redirect_kind"] = json!(if login_redirect {
+                "login"
+            } else {
+                "authenticated"
+            });
         }
     }
     Ok((data, access))

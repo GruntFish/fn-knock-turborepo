@@ -20,10 +20,13 @@ interface UseLoginBootstrapOptions {
   navigateAfterBootstrap: (options: {
     authenticated: boolean;
     redirectTo?: string | null;
+    redirectKind?: AuthBootstrapData["redirect_kind"];
   }) => Promise<boolean>;
   oidcError: Ref<string>;
   oidcProviders: Ref<AuthOidcProvider[]>;
   redirectUri: string | null;
+  suppressAutoRedirect: boolean;
+  logoutFlow?: string;
   refreshBrowserCapabilities: () => void;
   reportError: (message: string) => void;
   startLocationPolling: (client: AuthBootstrapData["client"]) => void;
@@ -43,6 +46,8 @@ export function useLoginBootstrap({
   oidcError,
   oidcProviders,
   redirectUri,
+  suppressAutoRedirect,
+  logoutFlow,
   refreshBrowserCapabilities,
   reportError,
   startLocationPolling,
@@ -52,7 +57,11 @@ export function useLoginBootstrap({
 
   const loadBootstrap = async () => {
     try {
-      const bootstrap = await AuthAPI.getBootstrap(redirectUri);
+      const bootstrap = await AuthAPI.getBootstrap(
+        redirectUri,
+        suppressAutoRedirect,
+        logoutFlow,
+      );
       if (disposed) return;
       await applyAuthSystemConfig(bootstrap);
       if (disposed) return;
@@ -75,6 +84,7 @@ export function useLoginBootstrap({
       await navigateAfterBootstrap({
         authenticated: bootstrap.auth.authenticated,
         redirectTo: bootstrap.redirect_to,
+        redirectKind: bootstrap.redirect_kind,
       });
     } catch (error: any) {
       if (disposed) return;

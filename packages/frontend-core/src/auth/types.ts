@@ -73,6 +73,7 @@ export type AuthBootstrapData = {
   oidc?: AuthOidcState;
   ldap?: AuthLdapState;
   redirect_to?: string;
+  redirect_kind?: "login" | "authenticated";
 };
 
 export type AuthSessionData = {

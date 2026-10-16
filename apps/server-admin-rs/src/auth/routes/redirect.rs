@@ -366,6 +366,30 @@ pub(super) fn resolve_shared_auth_login_redirect(
     build_shared_auth_login_url(&shared_auth_base_url, safe_redirect_uri.as_deref())
 }
 
+pub(super) fn bootstrap_login_redirect(
+    config: &Value,
+    headers: &HeaderMap,
+    redirect_uri: Option<&str>,
+    logged_out: bool,
+    logout_flow: Option<&str>,
+) -> Option<String> {
+    let target = service_local_login_for_target(config, headers, redirect_uri)
+        .or_else(|| resolve_shared_auth_login_redirect(config, headers, redirect_uri))?;
+    if !logged_out {
+        return Some(target);
+    }
+    // Both login builders return absolute URLs. Put the flag in the outer
+    // query so it also survives legacy #/login route canonicalization.
+    let mut target = url::Url::parse(&target).ok()?;
+    target.query_pairs_mut().append_pair("logged_out", "1");
+    if let Some(flow) = logout_flow.and_then(|value| uuid::Uuid::parse_str(value).ok()) {
+        target
+            .query_pairs_mut()
+            .append_pair("logout_flow", &flow.to_string());
+    }
+    Some(target.to_string())
+}
+
 pub(super) fn build_shared_auth_login_url(
     auth_base_url: &str,
     redirect_uri: Option<&str>,
@@ -700,7 +724,7 @@ pub(super) fn normalize_post_logout_redirect_target(target: &url::Url) -> url::U
     });
     let pairs = target
         .query_pairs()
-        .filter(|(key, _)| key != "logged_out")
+        .filter(|(key, _)| key != "logged_out" && key != "logout_flow")
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect::<Vec<_>>();
     normalized.set_query(None);

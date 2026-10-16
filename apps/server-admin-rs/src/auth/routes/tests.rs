@@ -7,6 +7,7 @@ use axum::{
 };
 use tower::ServiceExt;
 
+mod logout_bootstrap;
 mod password_scope;
 
 #[test]
@@ -296,32 +297,33 @@ fn cookie_clear_domains_cover_host_only_shared_and_current_host_scopes() {
 }
 
 #[test]
-fn post_logout_location_matches_node_prefix_resolution() {
-    let headers = HeaderMap::new();
-    assert_eq!(
-        post_logout_location(&headers, &Uri::from_static("/api/auth/logout")),
-        "/login?logged_out=1"
-    );
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-forwarded-path",
-        HeaderValue::from_static("/__auth__/api/auth/logout"),
-    );
-    assert_eq!(
-        post_logout_location(&headers, &Uri::from_static("/api/auth/logout")),
-        "/__auth__/login?logged_out=1"
-    );
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::REFERER,
-        HeaderValue::from_static("https://example.com/auth/settings"),
-    );
-    assert_eq!(
-        post_logout_location(&headers, &Uri::from_static("/api/auth/logout")),
-        "/auth/login?logged_out=1"
-    );
+fn post_logout_location_preserves_mount_and_starts_a_fresh_flow() {
+    let mut previous = None;
+    for (path, expected) in [
+        ("/api/auth/logout", "/login"),
+        ("/__auth__/api/auth/logout", "/__auth__/login"),
+        ("/auth/api/auth/logout", "/auth/login"),
+        ("/api/auth/logout", "/login"),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-path", HeaderValue::from_str(path).unwrap());
+        let location = post_logout_location(&headers, &Uri::from_static("/api/auth/logout"));
+        let url = url::Url::parse(&format!("https://app.example.com{location}")).unwrap();
+        assert_eq!(url.path(), expected);
+        assert!(
+            url.query_pairs()
+                .any(|(key, value)| key == "logged_out" && value == "1")
+        );
+        let flow = url
+            .query_pairs()
+            .find(|(key, _)| key == "logout_flow")
+            .unwrap()
+            .1
+            .into_owned();
+        assert!(uuid::Uuid::parse_str(&flow).is_ok());
+        assert_ne!(previous.as_ref(), Some(&flow));
+        previous = Some(flow);
+    }
 }
 
 fn forwarded_headers(host: &str) -> HeaderMap {
@@ -1263,6 +1265,8 @@ async fn bootstrap_migrates_valid_auth_host_session_to_shared_cookie_domain() {
         headers,
         Uri::from_static("/api/auth/bootstrap"),
         Query(BootstrapQuery {
+            logged_out: None,
+            logout_flow: None,
             redirect_uri: Some("https://app.example.com/dashboard".to_string()),
         }),
     )
@@ -1271,7 +1275,11 @@ async fn bootstrap_migrates_valid_auth_host_session_to_shared_cookie_domain() {
     assert_eq!(response.status(), StatusCode::OK);
     let cookies = response_set_cookies(&response);
     assert_eq!(cookies.len(), 3);
-    assert!(cookies[..2].iter().all(|cookie| cookie.contains("Max-Age=0")));
+    assert!(
+        cookies[..2]
+            .iter()
+            .all(|cookie| cookie.contains("Max-Age=0"))
+    );
     let fresh = cookies.last().unwrap();
     assert!(fresh.contains("x-go-reauth-proxy-session-id=valid-auth-host-session"));
     assert!(fresh.contains("Domain=example.com"));

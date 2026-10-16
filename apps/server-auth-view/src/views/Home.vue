@@ -365,11 +365,8 @@ async function handleLogout() {
   isLoading.value = true;
   try {
     showLogoutConfirmDialog.value = false;
-    await apiClient.get("/logout");
-    await router.replace({
-      path: "/login",
-      query: { logged_out: "1" },
-    });
+    const result = await AuthAPI.logout();
+    window.location.replace(result.redirect_to);
   } catch (e) {
     console.error("Logout failed:", e);
   } finally {

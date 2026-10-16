@@ -821,3 +821,59 @@ fn assert_passkey_session_clear_cookie_scopes(response: &Response) {
             .any(|cookie| cookie.contains("Domain=auth.example.com"))
     );
 }
+
+#[tokio::test]
+async fn public_passkey_availability_keeps_rp_host_boundaries() {
+    let (_directory, state) = passkey_test_state("public-host-boundaries").await;
+    state
+        .storage
+        .store
+        .add_totp(crate::store::TotpCredential {
+            id: "totp-1".into(),
+            secret: "secret".into(),
+            comment: "Test".into(),
+            created_at: time_utils::now_iso(),
+            access_scopes: Value::Null,
+            subdomain_access: json!({"mode": "all"}),
+        })
+        .await
+        .unwrap();
+    state
+        .storage
+        .store
+        .add_passkey(&json!({
+            "id": URL_SAFE_NO_PAD.encode([1u8, 2, 3, 4]),
+            "totpId": "totp-1",
+            "publicKey": cose_key_to_base64url(&test_cose_key()).unwrap(),
+        }))
+        .await
+        .unwrap();
+    let mut config = state.storage.store.get_config().await.unwrap();
+    for mode in ["auth_host", "parent_domain"] {
+        config["subdomain_mode"]["passkey_rp_mode"] = json!(mode);
+        for host in ["auth.example.com", "app.example.com", "other.example.net"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-forwarded-host", host.parse().unwrap());
+            headers.insert("x-forwarded-proto", "https".parse().unwrap());
+            let status = public_passkey_status(&state, &headers, &config).await;
+            assert_eq!(
+                status["available"],
+                host == "auth.example.com"
+                    || (mode == "parent_domain" && host == "app.example.com"),
+                "{mode}: {host}: {status}"
+            );
+        }
+    }
+    state
+        .storage
+        .store
+        .set_auth_login_mode(AuthLoginMode::Password)
+        .await
+        .unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-forwarded-host", "auth.example.com".parse().unwrap());
+    assert_eq!(
+        public_passkey_status(&state, &headers, &config).await["available"],
+        false
+    );
+}

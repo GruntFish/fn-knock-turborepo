@@ -63,7 +63,29 @@ pub(super) fn credential_name(credential: &TotpCredential, translator: &Translat
 
 pub(super) fn post_logout_location(headers: &HeaderMap, uri: &Uri) -> String {
     let base = resolve_auth_ui_base_prefix(headers, uri);
-    format!("{base}/login?logged_out=1")
+    // A fresh explicit logout starts a new navigation flow; bootstrap must
+    // preserve this ID so genuine redirect loops still share one budget.
+    format!(
+        "{base}/login?logged_out=1&logout_flow={}",
+        uuid::Uuid::new_v4()
+    )
+}
+
+pub(super) fn post_logout_response(headers: &HeaderMap, uri: &Uri, failed: bool) -> Response {
+    if failed {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let target = post_logout_location(headers, uri);
+    if headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        == Some("application/json")
+    {
+        // API clients must not follow a 302 into an HTML login document.
+        response::ok(json!({ "redirect_to": target })).into_response()
+    } else {
+        (StatusCode::FOUND, [(header::LOCATION, target)]).into_response()
+    }
 }
 
 pub(crate) fn resolve_auth_ui_base_prefix(headers: &HeaderMap, uri: &Uri) -> &'static str {

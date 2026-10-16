@@ -20,9 +20,7 @@ export interface RedirectGuardStorage {
 }
 
 export type AuthRedirectBlockReason =
-  | "invalid_redirect"
-  | "self_redirect"
-  | "repeat_redirect";
+  "invalid_redirect" | "self_redirect" | "repeat_redirect";
 
 export type AuthRedirectDecision =
   | {
@@ -36,6 +34,7 @@ export type AuthRedirectDecision =
     };
 
 interface AutoRedirectRecord {
+  logoutFlow?: string;
   target: string;
   redirectedAt: number;
   windowStartedAt: number;
@@ -43,11 +42,22 @@ interface AutoRedirectRecord {
 }
 
 interface GuardAutoRedirectOptions {
+  logoutFlow?: string;
   redirectTo: string;
   currentUrl: string;
   storage?: RedirectGuardStorage | null;
   now?: number;
   windowMs?: number;
+}
+
+/** An identifier for one explicit logout, not an authentication credential. */
+export function normalizeLogoutFlow(value?: string | null): string | undefined {
+  return value &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+    ? value.toLowerCase()
+    : undefined;
 }
 
 interface EffectiveLocation {
@@ -233,6 +243,7 @@ function readAutoRedirectRecord(
       return null;
     }
     return {
+      logoutFlow: normalizeLogoutFlow(parsed.logoutFlow),
       target: parsed.target,
       redirectedAt: parsed.redirectedAt,
       windowStartedAt:
@@ -277,6 +288,7 @@ function writeAutoRedirectRecord(
  * budget also stops alternating or nonce-changing loops in the short window.
  */
 export function guardAuthAutoRedirect({
+  logoutFlow,
   redirectTo,
   currentUrl,
   storage,
@@ -288,7 +300,11 @@ export function guardAuthAutoRedirect({
     return inspected;
   }
 
-  const previous = readAutoRedirectRecord(storage);
+  const flow = normalizeLogoutFlow(logoutFlow);
+  const record = readAutoRedirectRecord(storage);
+  // Session storage survives a cross-origin login round-trip. Only a fresh
+  // logout flow resets its budget; reloads and hops in the same flow do not.
+  const previous = flow && flow !== record?.logoutFlow ? null : record;
   const elapsed = previous ? now - previous.redirectedAt : null;
   if (
     previous?.target === inspected.targetKey &&
@@ -311,6 +327,7 @@ export function guardAuthAutoRedirect({
   }
 
   writeAutoRedirectRecord(storage, {
+    logoutFlow: flow ?? previous?.logoutFlow,
     target: inspected.targetKey,
     redirectedAt: now,
     windowStartedAt: withinWindow ? previous.windowStartedAt : now,
